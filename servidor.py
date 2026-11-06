@@ -48,12 +48,35 @@ def construir_ejemplos():
         a = {k: v for k, v in e.items() if k not in ("diasDesdeHoy", "hora", "enHoras")}
         a["inicio"] = fecha_ejemplo(e).isoformat()
         a["creada"] = ahora().isoformat()
-        a["comentarios"] = [
-            {**{k: v for k, v in c.items() if k != "haceMin"}, "fecha": (ahora() - timedelta(minutes=c["haceMin"])).isoformat()}
-            for c in a.get("comentarios", [])
+        a["mensajes"] = [
+            {**{k: v for k, v in m.items() if k != "haceMin"}, "fecha": (ahora() - timedelta(minutes=m["haceMin"])).isoformat()}
+            for m in a.get("mensajes", [])
         ]
-        resultado.append(a)
+        resultado.append(normalizar(a))
     return resultado
+
+
+def normalizar(a):
+    if "mensajes" not in a:
+        a["mensajes"] = [{**c, "tipo": "texto"} for c in a.get("comentarios", [])]
+    a.pop("comentarios", None)
+    a["aviso"] = a.get("aviso") or ""
+    a["apuntados"] = [{**p, "confirmada": bool(p.get("confirmada")) or p["id"] == a["organizador"]["id"]} for p in a.get("apuntados", [])]
+    a["espera"] = [{**p, "confirmada": bool(p.get("confirmada"))} for p in a.get("espera", [])]
+    return a
+
+
+def nuevo_id():
+    return uuid.uuid4().hex[:12]
+
+
+def mensaje_sistema(a, texto_mensaje):
+    a["mensajes"].append({"id": nuevo_id(), "tipo": "sistema", "autor": None, "texto": texto_mensaje, "fecha": ahora().isoformat()})
+
+
+def avisar_si_se_confirma(a):
+    if a["min"] > 1 and len(a["apuntados"]) == a["min"]:
+        mensaje_sistema(a, f"Ya sois {a['min']}: ¡quedada confirmada!")
 
 
 def ha_terminado(a):
@@ -67,9 +90,12 @@ def cargar():
             datos = json.loads(ARCHIVO_DATOS.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             datos = []
+    datos = [normalizar(a) for a in datos]
     vivos = [a for a in datos if a["id"].startswith("ej-") and not ha_terminado(a)]
     if len(vivos) < 4:
         datos = construir_ejemplos() + [a for a in datos if not a["id"].startswith("ej-")]
+        guardar(datos)
+    elif any([liberar(a) for a in datos]):
         guardar(datos)
     return datos
 
@@ -157,16 +183,68 @@ def actividad_valida(d):
 def apuntar(a, u):
     if any(p["id"] == u["id"] for p in a["apuntados"] + a["espera"]):
         return
-    (a["apuntados"] if len(a["apuntados"]) < a["max"] else a["espera"]).append(u)
+    persona = {**u, "confirmada": leer_fecha(a["inicio"]) - ahora() < timedelta(hours=3)}
+    if len(a["apuntados"]) < a["max"]:
+        a["apuntados"].append(persona)
+        mensaje_sistema(a, f"{u['nombre']} se ha apuntado")
+        avisar_si_se_confirma(a)
+    else:
+        a["espera"].append(persona)
+        mensaje_sistema(a, f"{u['nombre']} está en la lista de espera")
 
 
 def desapuntar(a, u):
     if a["organizador"]["id"] == u["id"]:
         raise ErrorPeticion("Quien organiza no puede borrarse. Si no vas a poder ir, cancela la quedada.")
+    estaba_dentro = any(p["id"] == u["id"] for p in a["apuntados"])
+    estaba_en_espera = any(p["id"] == u["id"] for p in a["espera"])
     a["apuntados"] = [p for p in a["apuntados"] if p["id"] != u["id"]]
     a["espera"] = [p for p in a["espera"] if p["id"] != u["id"]]
+    if estaba_dentro:
+        mensaje_sistema(a, f"{u['nombre']} ya no puede ir")
+    elif estaba_en_espera:
+        mensaje_sistema(a, f"{u['nombre']} ha salido de la lista de espera")
     while len(a["apuntados"]) < a["max"] and a["espera"]:
-        a["apuntados"].append(a["espera"].pop(0))
+        siguiente = a["espera"].pop(0)
+        a["apuntados"].append(siguiente)
+        mensaje_sistema(a, f"{siguiente['nombre']} entra desde la lista de espera")
+        avisar_si_se_confirma(a)
+
+
+def confirmar(a, u):
+    persona = next((p for p in a["apuntados"] + a["espera"] if p["id"] == u["id"]), None)
+    if not persona:
+        raise ErrorPeticion("No estás apuntado a esta quedada.")
+    persona["confirmada"] = True
+
+
+def fijar_aviso(a, u, aviso):
+    if a["organizador"]["id"] != u["id"]:
+        raise ErrorPeticion("Solo quien organiza puede fijar avisos.", 403)
+    a["aviso"] = texto(aviso, 200)
+    if a["aviso"]:
+        mensaje_sistema(a, f"Aviso fijado: {a['aviso']}")
+
+
+def liberar(a):
+    falta = leer_fecha(a["inicio"]) - ahora()
+    if falta <= timedelta(0) or falta > timedelta(hours=1) or not a["espera"]:
+        return False
+    sin_confirmar = [p for p in a["apuntados"] if not p.get("confirmada") and p["id"] != a["organizador"]["id"]][::-1]
+    esperando = list(a["espera"])
+    cambiado = False
+    for persona in sin_confirmar:
+        if not esperando:
+            break
+        siguiente = esperando.pop(0)
+        a["apuntados"] = [p for p in a["apuntados"] if p["id"] != persona["id"]]
+        a["espera"] = [p for p in a["espera"] if p["id"] != siguiente["id"]]
+        a["espera"].append({**persona, "confirmada": False})
+        a["apuntados"].append({**siguiente, "confirmada": True})
+        mensaje_sistema(a, f"{persona['nombre']} pasa a la lista de espera por no confirmar")
+        mensaje_sistema(a, f"{siguiente['nombre']} entra desde la lista de espera")
+        cambiado = True
+    return cambiado
 
 
 class Manejador(SimpleHTTPRequestHandler):
@@ -237,16 +315,17 @@ class Manejador(SimpleHTTPRequestHandler):
                 "id": uuid.uuid4().hex[:12],
                 "creada": ahora().isoformat(),
                 "organizador": organizador,
-                "apuntados": [organizador],
+                "aviso": "",
+                "apuntados": [{**organizador, "confirmada": True}],
                 "espera": [],
-                "comentarios": [],
+                "mensajes": [],
             })
             with CERROJO:
                 datos = cargar()
                 datos.append(nueva)
                 guardar(datos)
             return self.responder(201, nueva)
-        coincide = re.fullmatch(r"/api/actividades/([\w-]+)/(apuntarse|salir|comentarios)", ruta)
+        coincide = re.fullmatch(r"/api/actividades/([\w-]+)/(apuntarse|salir|mensajes|comentarios|confirmar|aviso)", ruta)
         if not coincide:
             raise ErrorPeticion("Ruta no encontrada.", 404)
         id_actividad, accion = coincide.groups()
@@ -260,11 +339,16 @@ class Manejador(SimpleHTTPRequestHandler):
                 apuntar(a, usuario)
             elif accion == "salir":
                 desapuntar(a, usuario)
+            elif accion == "confirmar":
+                confirmar(a, usuario)
+            elif accion == "aviso":
+                fijar_aviso(a, usuario, cuerpo.get("aviso"))
             else:
-                a["comentarios"].append({
-                    "id": uuid.uuid4().hex[:10],
+                a["mensajes"].append({
+                    "id": nuevo_id(),
+                    "tipo": "texto",
                     "autor": usuario,
-                    "texto": texto(cuerpo.get("texto"), 400, True, "el mensaje"),
+                    "texto": texto(cuerpo.get("texto"), 500, True, "el mensaje"),
                     "fecha": ahora().isoformat(),
                 })
             guardar(datos)

@@ -17,6 +17,7 @@ window.DATOS_EJEMPLO = [
   "min": 12,
   "max": 14,
   "precio": 4,
+  "aviso": "Campo 2. Entrada por la calle Bravo Murillo.",
   "organizador": {
    "id": "u-javi",
    "nombre": "Javi"
@@ -24,31 +25,38 @@ window.DATOS_EJEMPLO = [
   "apuntados": [
    {
     "id": "u-javi",
-    "nombre": "Javi"
+    "nombre": "Javi",
+    "confirmada": true
    },
    {
     "id": "u-marta",
-    "nombre": "Marta"
+    "nombre": "Marta",
+    "confirmada": true
    },
    {
     "id": "u-dani",
-    "nombre": "Dani"
+    "nombre": "Dani",
+    "confirmada": true
    },
    {
     "id": "u-sara",
-    "nombre": "Sara"
+    "nombre": "Sara",
+    "confirmada": true
    },
    {
     "id": "u-pablo",
-    "nombre": "Pablo"
+    "nombre": "Pablo",
+    "confirmada": true
    },
    {
     "id": "u-irene",
-    "nombre": "Irene"
+    "nombre": "Irene",
+    "confirmada": true
    },
    {
     "id": "u-alvaro",
-    "nombre": "Álvaro"
+    "nombre": "Álvaro",
+    "confirmada": true
    },
    {
     "id": "u-nerea",
@@ -68,9 +76,10 @@ window.DATOS_EJEMPLO = [
    }
   ],
   "espera": [],
-  "comentarios": [
+  "mensajes": [
    {
-    "id": "c-1-40",
+    "id": "m-1-40",
+    "tipo": "texto",
     "autor": {
      "id": "u-javi",
      "nombre": "Javi"
@@ -79,7 +88,8 @@ window.DATOS_EJEMPLO = [
     "haceMin": 40
    },
    {
-    "id": "c-2-25",
+    "id": "m-2-25",
+    "tipo": "texto",
     "autor": {
      "id": "u-marta",
      "nombre": "Marta"
@@ -88,7 +98,8 @@ window.DATOS_EJEMPLO = [
     "haceMin": 25
    },
    {
-    "id": "c-1-20",
+    "id": "m-1-20",
+    "tipo": "texto",
     "autor": {
      "id": "u-javi",
      "nombre": "Javi"
@@ -153,6 +164,7 @@ window.DATOS_EJEMPLO = [
   "min": 2,
   "max": 15,
   "precio": 0,
+  "aviso": "",
   "organizador": {
    "id": "u-sara",
    "nombre": "Sara"
@@ -160,19 +172,23 @@ window.DATOS_EJEMPLO = [
   "apuntados": [
    {
     "id": "u-sara",
-    "nombre": "Sara"
+    "nombre": "Sara",
+    "confirmada": true
    },
    {
     "id": "u-pablo",
-    "nombre": "Pablo"
+    "nombre": "Pablo",
+    "confirmada": true
    },
    {
     "id": "u-irene",
-    "nombre": "Irene"
+    "nombre": "Irene",
+    "confirmada": true
    },
    {
     "id": "u-alvaro",
-    "nombre": "Álvaro"
+    "nombre": "Álvaro",
+    "confirmada": true
    },
    {
     "id": "u-nerea",
@@ -184,7 +200,28 @@ window.DATOS_EJEMPLO = [
    }
   ],
   "espera": [],
-  "comentarios": []
+  "mensajes": [
+   {
+    "id": "m-5-50",
+    "tipo": "texto",
+    "autor": {
+     "id": "u-pablo",
+     "nombre": "Pablo"
+    },
+    "texto": "Primera vez que salgo con grupo, ¿esperáis de verdad? 😅",
+    "haceMin": 50
+   },
+   {
+    "id": "m-4-45",
+    "tipo": "texto",
+    "autor": {
+     "id": "u-sara",
+     "nombre": "Sara"
+    },
+    "texto": "¡Claro! Vamos a ritmo de charla",
+    "haceMin": 45
+   }
+  ]
  },
  {
   "id": "ej-3",
@@ -204,6 +241,7 @@ window.DATOS_EJEMPLO = [
   "min": 4,
   "max": 4,
   "precio": 6,
+  "aviso": "",
   "organizador": {
    "id": "u-alvaro",
    "nombre": "Álvaro"
@@ -211,11 +249,13 @@ window.DATOS_EJEMPLO = [
   "apuntados": [
    {
     "id": "u-alvaro",
-    "nombre": "Álvaro"
+    "nombre": "Álvaro",
+    "confirmada": true
    },
    {
     "id": "u-nerea",
-    "nombre": "Nerea"
+    "nombre": "Nerea",
+    "confirmada": true
    },
    {
     "id": "u-hugo",
@@ -223,7 +263,18 @@ window.DATOS_EJEMPLO = [
    }
   ],
   "espera": [],
-  "comentarios": []
+  "mensajes": [
+   {
+    "id": "m-7-30",
+    "tipo": "texto",
+    "autor": {
+     "id": "u-alvaro",
+     "nombre": "Álvaro"
+    },
+    "texto": "Pista 5, la del fondo",
+    "haceMin": 30
+   }
+  ]
  },
  {
   "id": "ej-4",
@@ -244,6 +295,7 @@ window.DATOS_EJEMPLO = [
   "min": 6,
   "max": 12,
   "precio": 0,
+  "aviso": "",
   "organizador": {
    "id": "u-carmen",
    "nombre": "Carmen"
@@ -251,7 +303,8 @@ window.DATOS_EJEMPLO = [
   "apuntados": [
    {
     "id": "u-carmen",
-    "nombre": "Carmen"
+    "nombre": "Carmen",
+    "confirmada": true
    },
    {
     "id": "u-rubén",
@@ -271,7 +324,7 @@ window.DATOS_EJEMPLO = [
    }
   ],
   "espera": [],
-  "comentarios": []
+  "mensajes": []
  },
  {
   "id": "ej-5",
@@ -321,6 +374,7 @@ window.DATOS_EJEMPLO = [
   "min": 2,
   "max": 12,
   "precio": 0,
+  "aviso": "",
   "organizador": {
    "id": "u-sergio",
    "nombre": "Sergio"
@@ -328,7 +382,8 @@ window.DATOS_EJEMPLO = [
   "apuntados": [
    {
     "id": "u-sergio",
-    "nombre": "Sergio"
+    "nombre": "Sergio",
+    "confirmada": true
    },
    {
     "id": "u-paula",
@@ -344,7 +399,7 @@ window.DATOS_EJEMPLO = [
    }
   ],
   "espera": [],
-  "comentarios": []
+  "mensajes": []
  },
  {
   "id": "ej-6",
@@ -394,6 +449,7 @@ window.DATOS_EJEMPLO = [
   "min": 3,
   "max": 20,
   "precio": 0,
+  "aviso": "",
   "organizador": {
    "id": "u-marta",
    "nombre": "Marta"
@@ -401,7 +457,8 @@ window.DATOS_EJEMPLO = [
   "apuntados": [
    {
     "id": "u-marta",
-    "nombre": "Marta"
+    "nombre": "Marta",
+    "confirmada": true
    },
    {
     "id": "u-dani",
@@ -437,7 +494,7 @@ window.DATOS_EJEMPLO = [
    }
   ],
   "espera": [],
-  "comentarios": []
+  "mensajes": []
  },
  {
   "id": "ej-7",
@@ -458,6 +515,7 @@ window.DATOS_EJEMPLO = [
   "min": 2,
   "max": 20,
   "precio": 0,
+  "aviso": "",
   "organizador": {
    "id": "u-irene",
    "nombre": "Irene"
@@ -465,7 +523,8 @@ window.DATOS_EJEMPLO = [
   "apuntados": [
    {
     "id": "u-irene",
-    "nombre": "Irene"
+    "nombre": "Irene",
+    "confirmada": true
    },
    {
     "id": "u-alvaro",
@@ -513,7 +572,7 @@ window.DATOS_EJEMPLO = [
    }
   ],
   "espera": [],
-  "comentarios": []
+  "mensajes": []
  },
  {
   "id": "ej-8",
@@ -534,6 +593,7 @@ window.DATOS_EJEMPLO = [
   "min": 6,
   "max": 12,
   "precio": 0,
+  "aviso": "",
   "organizador": {
    "id": "u-adrian",
    "nombre": "Adrián"
@@ -541,7 +601,8 @@ window.DATOS_EJEMPLO = [
   "apuntados": [
    {
     "id": "u-adrian",
-    "nombre": "Adrián"
+    "nombre": "Adrián",
+    "confirmada": true
    },
    {
     "id": "u-laura",
@@ -557,7 +618,7 @@ window.DATOS_EJEMPLO = [
    }
   ],
   "espera": [],
-  "comentarios": []
+  "mensajes": []
  },
  {
   "id": "ej-9",
@@ -578,6 +639,7 @@ window.DATOS_EJEMPLO = [
   "min": 2,
   "max": 10,
   "precio": 0,
+  "aviso": "",
   "organizador": {
    "id": "u-noa",
    "nombre": "Noa"
@@ -585,7 +647,8 @@ window.DATOS_EJEMPLO = [
   "apuntados": [
    {
     "id": "u-noa",
-    "nombre": "Noa"
+    "nombre": "Noa",
+    "confirmada": true
    },
    {
     "id": "u-mario",
@@ -597,7 +660,7 @@ window.DATOS_EJEMPLO = [
    }
   ],
   "espera": [],
-  "comentarios": []
+  "mensajes": []
  },
  {
   "id": "ej-10",
@@ -618,6 +681,7 @@ window.DATOS_EJEMPLO = [
   "min": 8,
   "max": 10,
   "precio": 3,
+  "aviso": "",
   "organizador": {
    "id": "u-dani",
    "nombre": "Dani"
@@ -625,7 +689,8 @@ window.DATOS_EJEMPLO = [
   "apuntados": [
    {
     "id": "u-dani",
-    "nombre": "Dani"
+    "nombre": "Dani",
+    "confirmada": true
    },
    {
     "id": "u-sara",
@@ -670,7 +735,18 @@ window.DATOS_EJEMPLO = [
     "nombre": "Sergio"
    }
   ],
-  "comentarios": []
+  "mensajes": [
+   {
+    "id": "m-3-120",
+    "tipo": "texto",
+    "autor": {
+     "id": "u-dani",
+     "nombre": "Dani"
+    },
+    "texto": "Si alguien no puede, que avise para que entre Laura",
+    "haceMin": 120
+   }
+  ]
  },
  {
   "id": "ej-11",
@@ -712,6 +788,7 @@ window.DATOS_EJEMPLO = [
   "min": 2,
   "max": 10,
   "precio": 0,
+  "aviso": "",
   "organizador": {
    "id": "u-nerea",
    "nombre": "Nerea"
@@ -719,7 +796,8 @@ window.DATOS_EJEMPLO = [
   "apuntados": [
    {
     "id": "u-nerea",
-    "nombre": "Nerea"
+    "nombre": "Nerea",
+    "confirmada": true
    },
    {
     "id": "u-hugo",
@@ -735,7 +813,7 @@ window.DATOS_EJEMPLO = [
    }
   ],
   "espera": [],
-  "comentarios": []
+  "mensajes": []
  },
  {
   "id": "ej-12",
@@ -781,6 +859,7 @@ window.DATOS_EJEMPLO = [
   "min": 2,
   "max": 12,
   "precio": 0,
+  "aviso": "",
   "organizador": {
    "id": "u-alba",
    "nombre": "Alba"
@@ -788,7 +867,8 @@ window.DATOS_EJEMPLO = [
   "apuntados": [
    {
     "id": "u-alba",
-    "nombre": "Alba"
+    "nombre": "Alba",
+    "confirmada": true
    },
    {
     "id": "u-diego",
@@ -796,6 +876,6 @@ window.DATOS_EJEMPLO = [
    }
   ],
   "espera": [],
-  "comentarios": []
+  "mensajes": []
  }
 ];

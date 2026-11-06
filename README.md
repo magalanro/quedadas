@@ -11,14 +11,20 @@ Una app para encontrar gente con la que hacer deporte cerca de ti: ves en un **m
 - **Apuntarte** y borrarte. Cada quedada tiene un **mínimo** (para que se haga) y un **máximo** de plazas. Si está completa, entras en la **lista de espera** y pasas dentro automáticamente si alguien se borra.
 - **Crear quedadas** marcando el punto de encuentro en el mapa y, en running, bici, senderismo o patines, **dibujando la ruta** punto a punto (los kilómetros se calculan solos).
 - **Escribir mensajes** al grupo, **copiar el enlace** para invitar a gente, **añadir al calendario** y abrir **cómo llegar**.
-- **Mis planes**: todo lo que tienes pendiente, ordenado por día.
+- **Mis planes**: todo lo que tienes pendiente, ordenado por día, con aviso de mensajes nuevos.
+- **Chat de cada quedada**: solo lo ven las personas apuntadas. Incluye mensajes automáticos ("Ana se ha apuntado", "Ya sois 12: ¡quedada confirmada!"), un aviso fijado por quien organiza ("Pista 3, puerta norte") y el aviso de "está escribiendo…".
+- **Confirmar asistencia**: 3 horas antes te pregunta "¿Sigues yendo?". Si no confirmas y hay gente en lista de espera, una hora antes tu plaza pasa al primero que espera. Así hay menos plantones.
 
 ## Modo nube con Supabase (el que se usa ahora)
 
 **Supabase** es un servicio que te da una base de datos en internet y un sistema de cuentas de usuario. Con él, la app guarda las quedadas en la nube: da igual desde qué móvil u ordenador entres, todo el mundo ve lo mismo y cada persona tiene su cuenta con email y contraseña.
 
 - La conexión está en `config.js` (la dirección del proyecto y la clave pública, que no es secreta).
-- Las tablas y reglas de seguridad están en `supabase/1-estructura.sql`, y las quedadas de ejemplo en `supabase/2-ejemplos.sql`. Se pegan en Supabase, en **SQL Editor**, y se pulsa **Run**.
+- Los scripts de la base de datos están en la carpeta `supabase/`. Se pegan en Supabase, en **SQL Editor**, y se pulsa **Run**. En un proyecto nuevo, el orden es:
+  1. `1-estructura.sql`: tablas, reglas de seguridad y permisos.
+  2. `4-chat-y-asistencia.sql`: chat de cada quedada, mensajes automáticos, aviso fijado y confirmación de asistencia.
+  3. `2-ejemplos.sql`: las quedadas de ejemplo.
+  (`3-permisos.sql` ya va incluido en el 1; solo hacía falta en proyectos creados antes.)
 - Si vuelves a ejecutar `2-ejemplos.sql`, las quedadas de ejemplo se renuevan con fechas de los próximos días. Las quedadas reales no se tocan.
 - Los cambios llegan solos y al momento: si alguien se apunta, lo ves sin recargar.
 

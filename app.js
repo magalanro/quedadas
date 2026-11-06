@@ -23,6 +23,7 @@ const ORIGEN_POR_DEFECTO = { lat: 40.4168, lng: -3.7038 };
 const CLAVE_DATOS = 'quedadas.datos.v1';
 const CLAVE_USUARIO = 'quedadas.usuario.v1';
 const CLAVE_FILTROS = 'quedadas.filtros.v1';
+const CLAVE_LEIDOS = 'quedadas.leidos.v1';
 const MOVIL = window.matchMedia('(max-width: 820px)');
 
 const estado = {
@@ -188,16 +189,82 @@ function esOrganizador(a) {
   return !!estado.usuario && a.organizador.id === estado.usuario.id;
 }
 
+function normalizarActividad(a) {
+  a.mensajes = Array.isArray(a.mensajes) ? a.mensajes : (a.comentarios || []).map(c => ({ ...c, tipo: 'texto' }));
+  delete a.comentarios;
+  a.aviso = a.aviso || '';
+  a.apuntados = (a.apuntados || []).map(p => ({ ...p, confirmada: !!p.confirmada || p.id === a.organizador.id }));
+  a.espera = (a.espera || []).map(p => ({ ...p, confirmada: !!p.confirmada }));
+  return a;
+}
+
+function mensajeSistema(a, texto) {
+  a.mensajes.push({ id: nuevoId(), tipo: 'sistema', autor: null, texto, fecha: new Date().toISOString() });
+}
+
+function avisarSiSeConfirma(a) {
+  if (a.min > 1 && a.apuntados.length === a.min) mensajeSistema(a, `Ya sois ${a.min}: ¡quedada confirmada!`);
+}
+
 function aplicarApuntarse(a, usuario) {
   if (a.apuntados.some(p => p.id === usuario.id) || a.espera.some(p => p.id === usuario.id)) return;
-  if (a.apuntados.length < a.max) a.apuntados.push(usuario);
-  else a.espera.push(usuario);
+  const persona = { id: usuario.id, nombre: usuario.nombre, confirmada: new Date(a.inicio) - Date.now() < 3 * 3600000 };
+  if (a.apuntados.length < a.max) {
+    a.apuntados.push(persona);
+    mensajeSistema(a, `${usuario.nombre} se ha apuntado`);
+    avisarSiSeConfirma(a);
+  } else {
+    a.espera.push(persona);
+    mensajeSistema(a, `${usuario.nombre} está en la lista de espera`);
+  }
 }
 
 function aplicarSalir(a, usuario) {
+  if (a.organizador.id === usuario.id) throw new Error('Quien organiza no puede borrarse. Si no vas a poder ir, cancela la quedada.');
+  const estabaDentro = a.apuntados.some(p => p.id === usuario.id);
+  const estabaEnEspera = a.espera.some(p => p.id === usuario.id);
   a.apuntados = a.apuntados.filter(p => p.id !== usuario.id);
   a.espera = a.espera.filter(p => p.id !== usuario.id);
-  while (a.apuntados.length < a.max && a.espera.length) a.apuntados.push(a.espera.shift());
+  if (estabaDentro) mensajeSistema(a, `${usuario.nombre} ya no puede ir`);
+  else if (estabaEnEspera) mensajeSistema(a, `${usuario.nombre} ha salido de la lista de espera`);
+  while (a.apuntados.length < a.max && a.espera.length) {
+    const siguiente = a.espera.shift();
+    a.apuntados.push(siguiente);
+    mensajeSistema(a, `${siguiente.nombre} entra desde la lista de espera`);
+    avisarSiSeConfirma(a);
+  }
+}
+
+function aplicarConfirmar(a, usuario) {
+  const persona = a.apuntados.find(p => p.id === usuario.id) || a.espera.find(p => p.id === usuario.id);
+  if (!persona) throw new Error('No estás apuntado a esta quedada.');
+  persona.confirmada = true;
+}
+
+function aplicarAviso(a, usuario, aviso) {
+  if (a.organizador.id !== usuario.id) throw new Error('Solo quien organiza puede fijar avisos.');
+  a.aviso = String(aviso || '').trim().slice(0, 200);
+  if (a.aviso) mensajeSistema(a, `Aviso fijado: ${a.aviso}`);
+}
+
+function aplicarLiberar(a) {
+  const falta = new Date(a.inicio) - Date.now();
+  if (falta <= 0 || falta > 3600000 || !a.espera.length) return false;
+  const sinConfirmar = a.apuntados.filter(p => !p.confirmada && p.id !== a.organizador.id).reverse();
+  const esperando = [...a.espera];
+  let cambiado = false;
+  for (const persona of sinConfirmar) {
+    const siguiente = esperando.shift();
+    if (!siguiente) break;
+    a.apuntados = a.apuntados.filter(p => p.id !== persona.id);
+    a.espera = a.espera.filter(p => p.id !== siguiente.id);
+    a.espera.push({ ...persona, confirmada: false });
+    a.apuntados.push({ ...siguiente, confirmada: true });
+    mensajeSistema(a, `${persona.nombre} pasa a la lista de espera por no confirmar`);
+    mensajeSistema(a, `${siguiente.nombre} entra desde la lista de espera`);
+    cambiado = true;
+  }
+  return cambiado;
 }
 
 function fechaEjemplo(e) {
@@ -221,7 +288,7 @@ function construirEjemplos() {
       ...resto,
       inicio: fechaEjemplo(e).toISOString(),
       creada: new Date().toISOString(),
-      comentarios: (resto.comentarios || []).map(({ haceMin, ...c }) => ({ ...c, fecha: new Date(Date.now() - haceMin * 60000).toISOString() }))
+      mensajes: (resto.mensajes || []).map(({ haceMin, ...m }) => ({ ...m, fecha: new Date(Date.now() - haceMin * 60000).toISOString() }))
     };
   });
 }
@@ -229,6 +296,7 @@ function construirEjemplos() {
 class AlmacenLocal {
   constructor() {
     this.modo = 'local';
+    this.asistencia = true;
     this.datos = [];
   }
 
@@ -237,7 +305,7 @@ class AlmacenLocal {
     if (!Array.isArray(datos)) datos = [];
     const ejemplosVivos = datos.filter(a => a.id.startsWith('ej-') && !haTerminado(a)).length;
     if (ejemplosVivos < 4) datos = [...construirEjemplos(), ...datos.filter(a => !a.id.startsWith('ej-'))];
-    this.datos = datos;
+    this.datos = datos.map(normalizarActividad);
     this.guardar();
   }
 
@@ -252,11 +320,12 @@ class AlmacenLocal {
   }
 
   async listar() {
+    if (this.datos.map(aplicarLiberar).some(Boolean)) this.guardar();
     return JSON.parse(JSON.stringify(this.datos));
   }
 
   async crear(datos) {
-    const a = { ...datos, id: nuevoId(), creada: new Date().toISOString(), apuntados: [datos.organizador], espera: [], comentarios: [] };
+    const a = { ...datos, aviso: '', id: nuevoId(), creada: new Date().toISOString(), apuntados: [{ ...datos.organizador, confirmada: true }], espera: [], mensajes: [] };
     this.datos.push(a);
     this.guardar();
     return a;
@@ -272,8 +341,18 @@ class AlmacenLocal {
     this.guardar();
   }
 
-  async comentar(id, usuario, texto) {
-    this.buscar(id).comentarios.push({ id: nuevoId(), autor: usuario, texto, fecha: new Date().toISOString() });
+  async escribir(id, usuario, texto) {
+    this.buscar(id).mensajes.push({ id: nuevoId(), tipo: 'texto', autor: { id: usuario.id, nombre: usuario.nombre }, texto, fecha: new Date().toISOString() });
+    this.guardar();
+  }
+
+  async confirmar(id, usuario) {
+    aplicarConfirmar(this.buscar(id), usuario);
+    this.guardar();
+  }
+
+  async fijarAviso(id, usuario, aviso) {
+    aplicarAviso(this.buscar(id), usuario, aviso);
     this.guardar();
   }
 
@@ -288,6 +367,7 @@ class AlmacenLocal {
 class AlmacenApi {
   constructor() {
     this.modo = 'compartido';
+    this.asistencia = true;
   }
 
   async pedir(ruta, opciones = {}) {
@@ -303,8 +383,8 @@ class AlmacenApi {
 
   async iniciar() {}
 
-  listar() {
-    return this.pedir('actividades');
+  async listar() {
+    return (await this.pedir('actividades')).map(normalizarActividad);
   }
 
   crear(datos) {
@@ -319,8 +399,16 @@ class AlmacenApi {
     return this.pedir(`actividades/${id}/salir`, { method: 'POST', body: { usuario } });
   }
 
-  comentar(id, usuario, texto) {
-    return this.pedir(`actividades/${id}/comentarios`, { method: 'POST', body: { usuario, texto } });
+  escribir(id, usuario, texto) {
+    return this.pedir(`actividades/${id}/mensajes`, { method: 'POST', body: { usuario, texto } });
+  }
+
+  confirmar(id, usuario) {
+    return this.pedir(`actividades/${id}/confirmar`, { method: 'POST', body: { usuario } });
+  }
+
+  fijarAviso(id, usuario, aviso) {
+    return this.pedir(`actividades/${id}/aviso`, { method: 'POST', body: { usuario, aviso } });
   }
 
   cancelar(id, usuario) {
@@ -351,6 +439,11 @@ class AlmacenSupabase {
     this.requiereCuenta = true;
     this.cliente = window.supabase.createClient(config.supabaseUrl, config.supabaseKey);
     this.temporizador = null;
+    this.chat = null;
+    this.asistencia = false;
+    this.ultimaLiberacion = 0;
+    this.canalChat = null;
+    this.ultimoAvisoEscribiendo = 0;
   }
 
   async iniciar() {
@@ -373,6 +466,34 @@ class AlmacenSupabase {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'inscripciones' }, () => this.cambio())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'comentarios' }, () => this.cambio())
       .subscribe();
+    this.cliente
+      .channel('cambios-chat')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'mensajes' }, () => this.cambio())
+      .subscribe();
+  }
+
+  abrirCanalChat(id, alVerEscribir) {
+    if (this.canalChat?.idActividad === id) return;
+    this.cerrarCanalChat();
+    const canal = this.cliente.channel(`chat-${id}`, { config: { broadcast: { self: false } } });
+    canal.on('broadcast', { event: 'escribiendo' }, ({ payload }) => {
+      if (payload?.id !== estado.usuario?.id) alVerEscribir(payload?.nombre || 'Alguien');
+    });
+    canal.subscribe();
+    canal.idActividad = id;
+    this.canalChat = canal;
+  }
+
+  cerrarCanalChat() {
+    if (!this.canalChat) return;
+    this.cliente.removeChannel(this.canalChat);
+    this.canalChat = null;
+  }
+
+  avisarEscribiendo() {
+    if (!this.canalChat || !estado.usuario || Date.now() - this.ultimoAvisoEscribiendo < 2000) return;
+    this.ultimoAvisoEscribiendo = Date.now();
+    this.canalChat.send({ type: 'broadcast', event: 'escribiendo', payload: { id: estado.usuario.id, nombre: estado.usuario.nombre } });
   }
 
   cambio() {
@@ -429,7 +550,10 @@ class AlmacenSupabase {
 
   convertir(f) {
     const porFecha = (x, y) => new Date(x.creada) - new Date(y.creada);
-    const persona = i => ({ id: i.usuario_id, nombre: i.perfil?.nombre || 'Alguien' });
+    const persona = i => ({ id: i.usuario_id, nombre: i.perfil?.nombre || 'Alguien', confirmada: !!i.confirmada || i.usuario_id === f.organizador });
+    const mensajes = this.chat
+      ? [...(f.mensajes || [])].sort(porFecha).map(m => ({ id: m.id, tipo: m.tipo, autor: m.tipo === 'sistema' ? null : { id: m.autor?.id, nombre: m.autor?.nombre || 'Alguien' }, texto: m.texto, fecha: m.creada }))
+      : [...(f.comentarios || [])].sort(porFecha).map(c => ({ id: c.id, tipo: 'texto', autor: { id: c.autor?.id, nombre: c.autor?.nombre || 'Alguien' }, texto: c.texto, fecha: c.creada }));
     const inscripciones = [...(f.inscripciones || [])].sort(porFecha);
     return {
       id: f.id,
@@ -448,21 +572,39 @@ class AlmacenSupabase {
       organizador: { id: f.organizador, nombre: f.organizador_perfil?.nombre || 'Alguien' },
       apuntados: inscripciones.filter(i => i.estado === 'dentro').map(persona),
       espera: inscripciones.filter(i => i.estado === 'espera').map(persona),
-      comentarios: [...(f.comentarios || [])].sort(porFecha).map(c => ({ id: c.id, autor: { id: c.autor?.id, nombre: c.autor?.nombre || 'Alguien' }, texto: c.texto, fecha: c.creada })),
+      aviso: f.aviso || '',
+      mensajes,
       creada: f.creada
     };
   }
 
-  async listar() {
+  consulta(conChat) {
     const desde = new Date(Date.now() - 12 * 3600000).toISOString();
-    const { data, error } = await this.cliente
-      .from('actividades')
-      .select('*, organizador_perfil:perfiles!organizador(id, nombre), inscripciones(usuario_id, estado, creada, perfil:perfiles(id, nombre)), comentarios(id, texto, creada, autor:perfiles(id, nombre))')
-      .gte('inicio', desde)
-      .order('inicio')
-      .limit(500);
-    if (error) throw new Error(traducirError(error));
-    return data.map(f => this.convertir(f));
+    const campos = conChat
+      ? '*, organizador_perfil:perfiles!organizador(id, nombre), inscripciones(usuario_id, estado, confirmada, creada, perfil:perfiles(id, nombre)), mensajes(id, tipo, texto, creada, autor:perfiles(id, nombre))'
+      : '*, organizador_perfil:perfiles!organizador(id, nombre), inscripciones(usuario_id, estado, creada, perfil:perfiles(id, nombre)), comentarios(id, texto, creada, autor:perfiles(id, nombre))';
+    return this.cliente.from('actividades').select(campos).gte('inicio', desde).order('inicio').limit(500);
+  }
+
+  async listar() {
+    if (this.chat && Date.now() - this.ultimaLiberacion > 60000) {
+      this.ultimaLiberacion = Date.now();
+      await this.cliente.rpc('liberar_sin_confirmar').then(() => {}, () => {});
+    }
+    let respuesta = await this.consulta(this.chat !== false);
+    if (respuesta.error && this.chat !== false) {
+      const antigua = await this.consulta(false);
+      if (!antigua.error) {
+        this.chat = false;
+        this.asistencia = false;
+        respuesta = antigua;
+      }
+    } else if (!respuesta.error && this.chat === null) {
+      this.chat = true;
+      this.asistencia = true;
+    }
+    if (respuesta.error) throw new Error(traducirError(respuesta.error));
+    return respuesta.data.map(f => this.convertir(f));
   }
 
   async crear(datos) {
@@ -496,9 +638,22 @@ class AlmacenSupabase {
     if (error) throw new Error(traducirError(error));
   }
 
-  async comentar(id, usuario, texto) {
-    const { error } = await this.cliente.from('comentarios').insert({ actividad_id: id, texto });
+  async escribir(id, usuario, texto) {
+    const { error } = this.chat
+      ? await this.cliente.from('mensajes').insert({ actividad_id: id, texto })
+      : await this.cliente.from('comentarios').insert({ actividad_id: id, texto });
     if (error) throw new Error(traducirError(error));
+  }
+
+  async confirmar(id) {
+    const { error } = await this.cliente.rpc('confirmar', { p_actividad: id, p_va: true });
+    if (error) throw new Error(traducirError(error));
+  }
+
+  async fijarAviso(id, usuario, aviso) {
+    const { data, error } = await this.cliente.from('actividades').update({ aviso: String(aviso || '').trim().slice(0, 200) }).eq('id', id).select('id');
+    if (error) throw new Error(traducirError(error));
+    if (!data?.length) throw new Error('Solo quien organiza puede fijar avisos.');
   }
 
   async cancelar(id) {
@@ -817,6 +972,41 @@ function cargarFiltros() {
   Object.assign(estado.filtros, guardados, { deportes: new Set(guardados.deportes || []), texto: '' });
 }
 
+function puedeVerChat(a) {
+  return estaApuntado(a) || estaEnEspera(a) || esOrganizador(a);
+}
+
+function miInscripcion(a) {
+  if (!estado.usuario) return null;
+  return a.apuntados.find(p => p.id === estado.usuario.id) || null;
+}
+
+function pendienteConfirmar(a) {
+  if (!estado.almacen?.asistencia || esOrganizador(a)) return false;
+  const yo = miInscripcion(a);
+  const falta = new Date(a.inicio) - Date.now();
+  return !!yo && !yo.confirmada && falta > 0 && falta <= 3 * 3600000;
+}
+
+function leerLeidos() {
+  return leerLocal(CLAVE_LEIDOS, {});
+}
+
+function marcarLeido(a) {
+  const ultimo = a.mensajes[a.mensajes.length - 1];
+  if (!ultimo) return;
+  const leidos = leerLeidos();
+  if (leidos[a.id] === ultimo.fecha) return;
+  leidos[a.id] = ultimo.fecha;
+  guardarLocal(CLAVE_LEIDOS, leidos);
+}
+
+function noLeidos(a) {
+  if (!estado.usuario || !puedeVerChat(a)) return 0;
+  const desde = leerLeidos()[a.id];
+  return a.mensajes.filter(m => m.tipo === 'texto' && m.autor?.id !== estado.usuario.id && (!desde || new Date(m.fecha) > new Date(desde))).length;
+}
+
 function htmlEstadoPlazas(a) {
   const p = plazas(a);
   if (p.completa) return `<span class="estado completa">Completa</span>`;
@@ -859,6 +1049,8 @@ function htmlFila(a, km) {
             <span>${esc(NIVELES[a.nivel] || '')}</span>
             ${mio ? `<span class="marca-mia">${esOrganizador(a) ? 'Organizas tú' : 'Vas'}</span>` : ''}
             ${estaEnEspera(a) ? `<span class="marca-mia">En espera</span>` : ''}
+            ${pendienteConfirmar(a) ? `<span class="marca-pendiente">Confirma si vas</span>` : ''}
+            ${noLeidos(a) ? `<span class="marca-mensajes">${noLeidos(a)} ${noLeidos(a) === 1 ? 'mensaje nuevo' : 'mensajes nuevos'}</span>` : ''}
           </span>
           <span class="fila-plazas">${htmlDorsales(a, 'pequenos')}<span class="cuenta">${p.n}/${a.max}</span></span>
         </span>
@@ -957,8 +1149,94 @@ function pintarResultados() {
   pintarMarcadores();
 }
 
-function htmlPersona(p, extra = '') {
-  return `<li class="persona"><span class="avatar" style="--c:${colorPersona(p.id)}">${esc(iniciales(p.nombre))}</span><span>${esc(p.nombre)}${p.id === estado.usuario?.id ? ' (tú)' : ''}</span>${extra}</li>`;
+function htmlPersona(p, extra = '', mostrarConfirmada = false) {
+  const marca = mostrarConfirmada && p.confirmada ? '<span class="confirmada" title="Ha confirmado que va" aria-label="Confirmado">✓</span>' : '';
+  return `<li class="persona"><span class="avatar" style="--c:${colorPersona(p.id)}">${esc(iniciales(p.nombre))}</span><span>${esc(p.nombre)}${p.id === estado.usuario?.id ? ' (tú)' : ''}</span>${marca}${extra}</li>`;
+}
+
+function horaMensaje(fechaIso) {
+  const fecha = new Date(fechaIso);
+  const hora = formatoHora(fecha);
+  const dias = diasHasta(fecha);
+  if (dias === 0) return hora;
+  if (dias === -1) return `Ayer, ${hora}`;
+  return `${fecha.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })}, ${hora}`;
+}
+
+function htmlMensajes(a) {
+  if (!a.mensajes.length) {
+    return '<li class="chat-vacio">Aún no hay mensajes. Saluda al grupo o pregunta lo que necesites: quién lleva el balón, dónde aparcar…</li>';
+  }
+  let anterior = null;
+  return a.mensajes.map(m => {
+    if (m.tipo === 'sistema') {
+      anterior = null;
+      return `<li class="mensaje sistema"><span>${esc(m.texto)}</span></li>`;
+    }
+    const mio = m.autor?.id === estado.usuario?.id;
+    const seguido = anterior === m.autor?.id;
+    anterior = m.autor?.id;
+    return `
+      <li class="mensaje ${mio ? 'mio' : 'otro'} ${seguido ? 'seguido' : ''}">
+        ${!mio ? `<span class="avatar" style="--c:${colorPersona(m.autor?.id)}" aria-hidden="true">${seguido ? '' : esc(iniciales(m.autor?.nombre))}</span>` : ''}
+        <div class="burbuja">
+          ${!mio && !seguido ? `<p class="autor" style="--c:${colorPersona(m.autor?.id)}">${esc(m.autor?.nombre)}</p>` : ''}
+          <p class="texto">${esc(m.texto)}</p>
+          <time datetime="${esc(m.fecha)}">${horaMensaje(m.fecha)}</time>
+        </div>
+      </li>`;
+  }).join('');
+}
+
+function htmlChat(a, organiza) {
+  if (!puedeVerChat(a)) {
+    return `
+      <section class="seccion-detalle chat-cerrado">
+        <h2>Chat del grupo</h2>
+        <p>Cuando te apuntes podrás hablar con el resto: avisar si llegas tarde, quién lleva el balón o dónde aparcar. Solo lo ven las personas apuntadas.</p>
+      </section>`;
+  }
+  const aviso = a.aviso
+    ? `<div class="aviso-fijado"><span class="icono-aviso" aria-hidden="true">📌</span><p>${esc(a.aviso)}</p>${organiza ? '<button class="enlace" data-accion="editar-aviso">Cambiar</button>' : ''}</div>`
+    : (organiza ? '<button class="boton terciario fijar-aviso" data-accion="editar-aviso">📌 Fijar un aviso para el grupo</button>' : '');
+  return `
+    <section class="seccion-detalle chat" id="chat">
+      <div class="chat-cabecera">
+        <h2>Chat del grupo</h2>
+        <span class="nota">Solo lo ven las personas apuntadas</span>
+      </div>
+      ${aviso}
+      <ol class="mensajes" id="lista-mensajes" aria-live="polite">${htmlMensajes(a)}</ol>
+      <p class="escribiendo" id="escribiendo" hidden></p>
+      <form class="form-chat" id="form-chat">
+        <label class="oculto" for="texto-chat">Escribe un mensaje</label>
+        <textarea id="texto-chat" rows="1" maxlength="500" placeholder="Escribe al grupo" enterkeyhint="send"></textarea>
+        <button class="boton primario boton-enviar" aria-label="Enviar">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 12l16-8-6 16-2.5-6.5L4 12z" fill="currentColor"/></svg>
+        </button>
+      </form>
+    </section>`;
+}
+
+function htmlConfirmacion(a) {
+  if (!pendienteConfirmar(a)) {
+    const yo = miInscripcion(a);
+    const falta = new Date(a.inicio) - Date.now();
+    if (estado.almacen?.asistencia && yo?.confirmada && !esOrganizador(a) && falta > 0 && falta <= 3 * 3600000) {
+      return '<p class="confirmacion-hecha">✓ Has confirmado que vas. ¡Nos vemos allí!</p>';
+    }
+    return '';
+  }
+  const hayEspera = a.espera.length > 0;
+  return `
+    <div class="confirmacion" role="region" aria-label="Confirmar asistencia">
+      <p class="confirmacion-titulo">¿Sigues yendo?</p>
+      <p>${hayEspera ? `Hay ${a.espera.length} ${a.espera.length === 1 ? 'persona' : 'personas'} en lista de espera. Si no confirmas, una hora antes tu plaza pasará a la primera.` : 'Confirma para que el grupo sepa con quién puede contar.'}</p>
+      <div class="confirmacion-botones">
+        <button class="boton primario" data-accion="confirmar-si">Sí, voy</button>
+        <button class="boton secundario" data-accion="salir">No puedo ir</button>
+      </div>
+    </div>`;
 }
 
 function htmlDetalle(a) {
@@ -985,6 +1263,7 @@ function htmlDetalle(a) {
 
   let botonPrincipal;
   if (organiza) botonPrincipal = `<button class="boton primario grande" disabled>Organizas tú esta quedada</button>`;
+  else if (apuntado && pendienteConfirmar(a)) botonPrincipal = '';
   else if (apuntado) botonPrincipal = `<button class="boton secundario grande" data-accion="salir">Ya no puedo ir</button>`;
   else if (enEspera) botonPrincipal = `<button class="boton secundario grande" data-accion="salir">Salir de la lista de espera</button>`;
   else if (p.completa) botonPrincipal = `<button class="boton primario grande" data-accion="apuntarse">Apuntarme a la lista de espera</button>`;
@@ -1017,6 +1296,7 @@ function htmlDetalle(a) {
         </div>
         ${htmlDorsales(a, 'grandes')}
         <p class="plazas-texto">${estadoTexto}</p>
+        ${htmlConfirmacion(a)}
         <div class="acciones-detalle">
           ${botonPrincipal}
         </div>
@@ -1040,23 +1320,11 @@ function htmlDetalle(a) {
 
       <section class="seccion-detalle">
         <h2>Quién va</h2>
-        <ul class="personas">${a.apuntados.map(x => htmlPersona(x, x.id === a.organizador.id ? '<span class="rol">Organiza</span>' : '')).join('')}</ul>
+        <ul class="personas">${a.apuntados.map(x => htmlPersona(x, x.id === a.organizador.id ? '<span class="rol">Organiza</span>' : '', estado.almacen?.asistencia && new Date(a.inicio) - Date.now() <= 3 * 3600000)).join('')}</ul>
         ${a.espera.length ? `<h3>Lista de espera</h3><ol class="personas espera">${a.espera.map(x => htmlPersona(x)).join('')}</ol>` : ''}
       </section>
 
-      <section class="seccion-detalle">
-        <h2>Mensajes</h2>
-        ${a.comentarios.length ? `<ul class="comentarios">${a.comentarios.map(c => `
-          <li>
-            <span class="avatar" style="--c:${colorPersona(c.autor.id)}">${esc(iniciales(c.autor.nombre))}</span>
-            <div><p class="autor">${esc(c.autor.nombre)} <time>${hace(c.fecha)}</time></p><p>${esc(c.texto)}</p></div>
-          </li>`).join('')}</ul>` : '<p class="nota">Nadie ha escrito todavía. Pregunta lo que necesites saber.</p>'}
-        <form class="form-comentario" id="form-comentario">
-          <label class="oculto" for="texto-comentario">Escribe un mensaje</label>
-          <textarea id="texto-comentario" rows="2" maxlength="400" placeholder="Escribe un mensaje para el grupo"></textarea>
-          <button class="boton primario">Enviar</button>
-        </form>
-      </section>
+      ${htmlChat(a, organiza)}
 
       ${organiza ? `<button class="boton peligro ancho" data-accion="cancelar">Cancelar quedada</button>` : ''}
     </article>`;
@@ -1190,10 +1458,14 @@ function pintarUsuario() {
   } else {
     boton.innerHTML = `<span class="nombre-usuario">${estado.almacen?.requiereCuenta ? 'Entrar' : 'Poner mi nombre'}</span>`;
   }
-  const n = misPlanes().length;
+  const planes = misPlanes();
+  const n = planes.length;
   const contador = $('#contador-planes');
   contador.hidden = !n;
   contador.textContent = n;
+  const atencion = planes.some(a => pendienteConfirmar(a) || noLeidos(a));
+  contador.classList.toggle('atencion', atencion);
+  contador.title = atencion ? 'Tienes mensajes nuevos o algo que confirmar' : '';
 }
 
 function pintarPestanas() {
@@ -1211,11 +1483,30 @@ function pintarVista(forzar = false) {
     pintarResultados();
   } else {
     vista.dataset.clave = clave;
-    if (estado.vista === 'detalle') vista.innerHTML = htmlDetalle(estado.actividades.find(a => a.id === estado.seleccion));
-    else if (estado.vista === 'crear') vista.innerHTML = htmlCrear();
-    else vista.innerHTML = htmlPlanes();
+    if (estado.vista === 'detalle') {
+      const a = estado.actividades.find(x => x.id === estado.seleccion);
+      const campo = $('#texto-chat');
+      const borrador = campo?.value || '';
+      const tenia = document.activeElement === campo;
+      const seleccion = tenia ? [campo.selectionStart, campo.selectionEnd] : null;
+      vista.innerHTML = htmlDetalle(a);
+      const nuevo = $('#texto-chat');
+      if (nuevo && borrador) {
+        nuevo.value = borrador;
+        ajustarAlturaChat(nuevo);
+      }
+      if (nuevo && tenia) {
+        nuevo.focus({ preventScroll: true });
+        if (seleccion) nuevo.setSelectionRange(seleccion[0], seleccion[1]);
+      }
+      despuesDePintarDetalle(a);
+    } else {
+      estado.almacen?.cerrarCanalChat?.();
+      vista.innerHTML = estado.vista === 'crear' ? htmlCrear() : htmlPlanes();
+    }
     pintarMarcadores();
   }
+  if (estado.vista !== 'detalle') estado.almacen?.cerrarCanalChat?.();
   document.body.dataset.vista = estado.vista;
   pintarPestanas();
   pintarUsuario();
@@ -1565,18 +1856,102 @@ async function accionSobreSeleccion(tipo) {
   }
 }
 
-async function enviarComentario() {
-  const campo = $('#texto-comentario');
-  const texto = campo.value.trim();
-  if (!texto) return;
-  const usuario = await asegurarUsuario('Para escribir en el grupo, dinos cómo te llamas.');
+let enviandoMensaje = false;
+
+async function enviarMensaje() {
+  const campo = $('#texto-chat');
+  const texto = campo?.value.trim();
+  if (!texto || enviandoMensaje) return;
+  const usuario = await asegurarUsuario('Para escribir en el grupo, entra con tu cuenta.');
   if (!usuario) return;
+  enviandoMensaje = true;
+  campo.value = '';
+  ajustarAlturaChat(campo);
   try {
-    await estado.almacen.comentar(estado.seleccion, usuario, texto);
+    await estado.almacen.escribir(estado.seleccion, usuario, texto);
     await refrescar();
     pintarVista();
-    const lista = document.querySelector('.comentarios');
-    lista?.lastElementChild?.scrollIntoView({ block: 'nearest' });
+    $('#texto-chat')?.focus({ preventScroll: true });
+  } catch (error) {
+    const actual = $('#texto-chat');
+    if (actual && !actual.value) actual.value = texto;
+    avisar(error.message, 'error');
+  } finally {
+    enviandoMensaje = false;
+  }
+}
+
+function ajustarAlturaChat(campo) {
+  if (!campo) return;
+  campo.style.height = 'auto';
+  campo.style.height = `${Math.min(campo.scrollHeight, 140)}px`;
+}
+
+let temporizadorEscribiendo = null;
+
+function mostrarEscribiendo(nombre) {
+  const el = $('#escribiendo');
+  if (!el) return;
+  el.textContent = `${nombre} está escribiendo…`;
+  el.hidden = false;
+  clearTimeout(temporizadorEscribiendo);
+  temporizadorEscribiendo = setTimeout(() => { el.hidden = true; }, 3500);
+}
+
+function despuesDePintarDetalle(a) {
+  const lista = $('#lista-mensajes');
+  if (!a || !lista) {
+    estado.almacen?.cerrarCanalChat?.();
+    return;
+  }
+  lista.scrollTop = lista.scrollHeight;
+  marcarLeido(a);
+  estado.almacen?.abrirCanalChat?.(a.id, mostrarEscribiendo);
+}
+
+function editarAviso() {
+  const a = estado.actividades.find(x => x.id === estado.seleccion);
+  if (!a) return;
+  abrirModal(`
+    <h2>Aviso para el grupo</h2>
+    <p>Aparece fijado arriba del chat. Sirve para lo importante: pista, puerta de entrada, qué llevar.</p>
+    <form id="form-aviso">
+      <label class="campo"><span>Aviso</span><textarea name="aviso" rows="3" maxlength="200" placeholder="Pista 3, entrada por la puerta norte">${esc(a.aviso)}</textarea></label>
+      <p class="error-form" id="error-aviso" role="alert" hidden></p>
+      <div class="acciones-modal ${a.aviso ? 'separadas' : ''}">
+        ${a.aviso ? '<button type="button" class="boton secundario" data-quitar>Quitar aviso</button>' : '<button type="button" class="boton secundario" data-cerrar>Cancelar</button>'}
+        <button class="boton primario">Fijar aviso</button>
+      </div>
+    </form>`, capa => {
+    const guardar = async texto => {
+      try {
+        await estado.almacen.fijarAviso(a.id, estado.usuario, texto);
+        cerrarModal();
+        await refrescar();
+        pintarVista();
+        avisar(texto ? 'Aviso fijado' : 'Aviso quitado');
+      } catch (error) {
+        const el = capa.querySelector('#error-aviso');
+        el.textContent = traducirError(error);
+        el.hidden = false;
+      }
+    };
+    capa.querySelector('[data-cerrar]')?.addEventListener('click', cerrarModal);
+    capa.querySelector('[data-quitar]')?.addEventListener('click', () => guardar(''));
+    capa.querySelector('form').onsubmit = e => {
+      e.preventDefault();
+      const texto = e.target.aviso.value.trim();
+      if (texto) guardar(texto);
+    };
+  });
+}
+
+async function confirmarAsistencia() {
+  try {
+    await estado.almacen.confirmar(estado.seleccion, estado.usuario);
+    await refrescar();
+    pintarVista();
+    avisar('¡Confirmado! El grupo ya sabe que vas');
   } catch (error) {
     avisar(error.message, 'error');
   }
@@ -1703,6 +2078,12 @@ document.addEventListener('click', async e => {
     case 'compartir':
       copiarEnlace();
       break;
+    case 'confirmar-si':
+      confirmarAsistencia();
+      break;
+    case 'editar-aviso':
+      editarAviso();
+      break;
     case 'calendario':
       descargarCalendario();
       break;
@@ -1746,6 +2127,11 @@ document.addEventListener('click', async e => {
 
 document.addEventListener('input', e => {
   const el = e.target;
+  if (el.id === 'texto-chat') {
+    ajustarAlturaChat(el);
+    estado.almacen?.avisarEscribiendo?.();
+    return;
+  }
   if (el.id === 'buscar') {
     estado.filtros.texto = el.value;
     pintarResultados();
@@ -1780,9 +2166,9 @@ document.addEventListener('submit', e => {
   if (e.target.id === 'form-crear') {
     e.preventDefault();
     publicar();
-  } else if (e.target.id === 'form-comentario') {
+  } else if (e.target.id === 'form-chat') {
     e.preventDefault();
-    enviarComentario();
+    enviarMensaje();
   }
 });
 
@@ -1791,9 +2177,9 @@ document.addEventListener('keydown', e => {
     if (!$('#modal').hidden) cerrarModal();
     else if (estado.modoMapa) { estado.modoMapa = null; pintarAvisoMapa(); }
   }
-  if (e.key === 'Enter' && !e.shiftKey && e.target.id === 'texto-comentario') {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.target.id === 'texto-chat' && !MOVIL.matches) {
     e.preventDefault();
-    enviarComentario();
+    enviarMensaje();
   }
 });
 
@@ -1810,12 +2196,11 @@ window.addEventListener('hashchange', abrirDesdeHash);
 MOVIL.addEventListener?.('change', () => { cambiarModoMovil('lista'); setTimeout(() => mapa.invalidateSize(), 100); pintarAvisoMapa(); });
 
 async function sondear() {
-  if (estado.almacen.modo === 'local' || document.hidden) return;
+  if (document.hidden) return;
   const antes = JSON.stringify(estado.actividades);
   await refrescar();
   if (JSON.stringify(estado.actividades) === antes) return;
-  const escribiendo = document.activeElement?.id === 'texto-comentario' || $('#texto-comentario')?.value;
-  if (estado.vista === 'crear' || (estado.vista === 'detalle' && escribiendo)) return;
+  if (estado.vista === 'crear' || !$('#modal').hidden) return;
   const scroll = $('#vista').scrollTop;
   pintarVista();
   $('#vista').scrollTop = scroll;
@@ -1839,7 +2224,7 @@ async function arrancar() {
   pintarVista(true);
   abrirDesdeHash();
   intentarUbicacionAutomatica();
-  setInterval(sondear, estado.almacen.modo === 'nube' ? 30000 : 8000);
+  setInterval(sondear, estado.almacen.modo === 'nube' ? 30000 : estado.almacen.modo === 'local' ? 60000 : 8000);
   setInterval(() => { if (estado.vista === 'lista') pintarResultados(); }, 60000);
 }
 
