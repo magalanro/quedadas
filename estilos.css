@@ -774,6 +774,7 @@ button:disabled { cursor: default; }
 }
 
 .seccion-detalle h3 { margin: 14px 0 6px; font-size: 15px; color: var(--tinta-suave); }
+.ocultos { margin: 8px 0 0; font-size: 14px; color: var(--tinta-suave); }
 
 .personas { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px 12px; }
 .persona { display: flex; align-items: center; gap: 8px; font-size: 15px; min-width: 0; }

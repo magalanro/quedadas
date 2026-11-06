@@ -632,6 +632,8 @@ class AlmacenSupabase {
       ? [...(f.mensajes || [])].sort(porFecha).map(m => ({ id: m.id, tipo: m.tipo, autor: m.tipo === 'sistema' ? null : { id: m.autor?.id, nombre: m.autor?.nombre || 'Alguien' }, texto: m.texto, fecha: m.creada }))
       : [...(f.comentarios || [])].sort(porFecha).map(c => ({ id: c.id, tipo: 'texto', autor: { id: c.autor?.id, nombre: c.autor?.nombre || 'Alguien' }, texto: c.texto, fecha: c.creada }));
     const inscripciones = [...(f.inscripciones || [])].sort(porFecha);
+    const visibles = estadoInscripcion => inscripciones.filter(i => i.estado === estadoInscripcion).map(persona);
+    const conOcultos = (lista, total) => [...lista, ...Array.from({ length: Math.max(0, (total ?? 0) - lista.length) }, () => ({ id: null, nombre: '', confirmada: false, oculta: true }))];
     return {
       id: f.id,
       deporte: f.deporte,
@@ -647,8 +649,8 @@ class AlmacenSupabase {
       max: f.max,
       precio: Number(f.precio),
       organizador: { id: f.organizador, nombre: f.organizador_perfil?.nombre || 'Alguien' },
-      apuntados: inscripciones.filter(i => i.estado === 'dentro').map(persona),
-      espera: inscripciones.filter(i => i.estado === 'espera').map(persona),
+      apuntados: conOcultos(visibles('dentro'), f.n_dentro),
+      espera: conOcultos(visibles('espera'), f.n_espera),
       aviso: f.aviso || '',
       grupo: this.convertirGrupo(f.grupo),
       mensajes,
@@ -660,7 +662,7 @@ class AlmacenSupabase {
     const desde = new Date(Date.now() - 12 * 3600000).toISOString();
     const base = '*, organizador_perfil:perfiles!organizador(id, nombre), ';
     const campos = {
-      2: base + 'inscripciones(usuario_id, estado, confirmada, creada, perfil:perfiles(id, nombre)), mensajes(id, tipo, texto, creada, autor:perfiles(id, nombre)), grupo:grupos(id, nombre, dia_semana, hora, activo, creador, miembros_grupo(usuario_id))',
+      2: base + 'inscripciones(usuario_id, estado, confirmada, creada, perfil:perfiles(id, nombre)), mensajes(id, tipo, texto, creada, autor:perfiles(id, nombre)), grupo:grupos(id, nombre, dia_semana, hora, activo, creador, n_miembros, miembros_grupo(usuario_id))',
       1: base + 'inscripciones(usuario_id, estado, confirmada, creada, perfil:perfiles(id, nombre)), mensajes(id, tipo, texto, creada, autor:perfiles(id, nombre))',
       0: base + 'inscripciones(usuario_id, estado, creada, perfil:perfiles(id, nombre)), comentarios(id, texto, creada, autor:perfiles(id, nombre))'
     }[nivel];
@@ -696,14 +698,15 @@ class AlmacenSupabase {
       activo: g.activo,
       creador: g.creador,
       lugar: g.lugar_nombre,
-      miembros: (g.miembros_grupo || []).map(m => m.usuario_id)
+      miembros: (g.miembros_grupo || []).map(m => m.usuario_id),
+      numMiembros: g.n_miembros ?? (g.miembros_grupo || []).length
     };
   }
 
   async leerMisGrupos() {
     const { data, error } = await this.cliente
       .from('miembros_grupo')
-      .select('grupo:grupos(id, nombre, deporte, dia_semana, hora, activo, creador, lugar_nombre, miembros_grupo(usuario_id))')
+      .select('grupo:grupos(id, nombre, deporte, dia_semana, hora, activo, creador, lugar_nombre, n_miembros, miembros_grupo(usuario_id))')
       .eq('usuario_id', estado.usuario.id);
     if (error) return [];
     return (data || []).map(f => this.convertirGrupo(f.grupo)).filter(Boolean);
@@ -1576,6 +1579,13 @@ function pintarResultados() {
   pintarMarcadores();
 }
 
+function htmlOcultos(lista) {
+  const n = lista.filter(x => x.oculta).length;
+  if (!n) return '';
+  const texto = estado.usuario ? 'Verás sus nombres cuando te apuntes.' : 'Entra y apúntate para ver sus nombres.';
+  return `<p class="ocultos">${n === 1 ? 'Y 1 persona más' : `Y ${n} personas más`}. ${texto}</p>`;
+}
+
 function htmlPersona(p, extra = '', mostrarConfirmada = false) {
   const marca = mostrarConfirmada && p.confirmada ? '<span class="confirmada" title="Ha confirmado que va" aria-label="Confirmado">✓</span>' : '';
   return `<li class="persona"><span class="avatar" style="--c:${colorPersona(p.id)}">${esc(iniciales(p.nombre))}</span><span>${esc(p.nombre)}${p.id === estado.usuario?.id ? ' (tú)' : ''}</span>${marca}${extra}</li>`;
@@ -1664,7 +1674,7 @@ function htmlGrupo(a) {
   } else {
     acciones = `<button class="boton secundario" data-accion="unirse-grupo" data-grupo="${g.id}">Unirme al grupo</button>`;
   }
-  const n = g.miembros.length;
+  const n = g.numMiembros ?? g.miembros.length;
   const explicacion = soyMiembro
     ? 'Eres del grupo: cada semana te apuntamos solo. Si un día no puedes, pulsa "Ya no puedo ir".'
     : 'Si te unes, te apuntamos solo cada semana y te avisamos al móvil.';
@@ -1799,8 +1809,9 @@ function htmlDetalle(a) {
 
       <section class="seccion-detalle">
         <h2>Quién va</h2>
-        <ul class="personas">${a.apuntados.map(x => htmlPersona(x, x.id === a.organizador.id ? '<span class="rol">Organiza</span>' : '', estado.almacen?.asistencia && new Date(a.inicio) - Date.now() <= 3 * 3600000)).join('')}</ul>
-        ${a.espera.length ? `<h3>Lista de espera</h3><ol class="personas espera">${a.espera.map(x => htmlPersona(x)).join('')}</ol>` : ''}
+        <ul class="personas">${a.apuntados.filter(x => !x.oculta).map(x => htmlPersona(x, x.id === a.organizador.id ? '<span class="rol">Organiza</span>' : '', estado.almacen?.asistencia && new Date(a.inicio) - Date.now() <= 3 * 3600000)).join('')}</ul>
+        ${htmlOcultos(a.apuntados)}
+        ${a.espera.length ? `<h3>Lista de espera</h3><ol class="personas espera">${a.espera.filter(x => !x.oculta).map(x => htmlPersona(x)).join('')}</ol>${htmlOcultos(a.espera)}` : ''}
       </section>
 
       ${htmlChat(a, organiza)}
@@ -1833,7 +1844,7 @@ function htmlMisGrupos() {
           <span class="fila-cuerpo">
             <span class="fila-titulo">${esc(g.nombre)}</span>
             <span class="fila-lugar">Cada ${DIAS[g.diaSemana - 1]} a las ${esc(g.hora)}, ${esc(g.lugar || '')}</span>
-            <span class="fila-meta"><span>${g.miembros.length} ${g.miembros.length === 1 ? 'miembro' : 'miembros'}</span><span>${cuando}</span>${g.creador === estado.usuario.id ? '<span class="marca-mia">Lo creaste tú</span>' : ''}</span>
+            <span class="fila-meta"><span>${g.numMiembros ?? g.miembros.length} ${(g.numMiembros ?? g.miembros.length) === 1 ? 'miembro' : 'miembros'}</span><span>${cuando}</span>${g.creador === estado.usuario.id ? '<span class="marca-mia">Lo creaste tú</span>' : ''}</span>
           </span>
         </button>
       </li>`;
@@ -2390,7 +2401,7 @@ async function accionGrupo(tipo, id) {
 async function hacerEquipos() {
   const a = estado.actividades.find(x => x.id === estado.seleccion);
   if (!a) return;
-  const { claro, oscuro } = repartirEquipos(a.apuntados);
+  const { claro, oscuro } = repartirEquipos(a.apuntados.filter(x => !x.oculta));
   const texto = `Equipos hechos al azar 🎲\n⚪ Claro: ${claro.join(', ')}\n⚫ Oscuro: ${oscuro.join(', ')}`;
   try {
     await estado.almacen.escribir(a.id, estado.usuario, texto);
@@ -2418,7 +2429,10 @@ async function accionSobreSeleccion(tipo) {
       await estado.almacen.salir(id, estado.usuario);
       avisar('Te has borrado de la quedada');
     } else if (tipo === 'cancelar') {
-      const ok = await confirmar('¿Cancelar esta quedada?', `Se borrará para las ${a.apuntados.length} personas apuntadas. No se puede deshacer.`, 'Cancelar quedada');
+      const otros = a.apuntados.length + a.espera.length - 1;
+      const aviso = otros > 0 && estado.almacen?.modo === 'nube' ? ` Avisaremos al móvil a ${otros === 1 ? 'la persona apuntada' : `las ${otros} personas apuntadas`}.` : '';
+      const grupo = a.grupo ? ' Solo se cancela la de este día: el grupo sigue la semana que viene.' : '';
+      const ok = await confirmar('¿Cancelar esta quedada?', `Se borrará y no se puede deshacer.${aviso}${grupo}`, 'Cancelar quedada');
       if (!ok) return;
       await estado.almacen.cancelar(id, estado.usuario);
       await refrescar();

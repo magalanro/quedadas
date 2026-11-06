@@ -29,7 +29,8 @@ Una app para encontrar gente con la que hacer deporte cerca de ti: ves en un **m
   2. `4-chat-y-asistencia.sql`: chat de cada quedada, mensajes automáticos, aviso fijado y confirmación de asistencia.
   3. `5-avisos-y-google.sql`: notificaciones en el móvil y nombre de perfil para quien entra con Google.
   4. `6-grupos.sql`: grupos fijos con quedadas que se repiten cada semana.
-  5. `2-ejemplos.sql`: las quedadas de ejemplo.
+  5. `7-privacidad-y-cancelar.sql`: solo ven quién va las personas apuntadas (el resto ve cuántas son), aviso al cancelar, el grupo no recrea la quedada cancelada y límite de 10 quedadas y 3 grupos al día por persona.
+  6. `2-ejemplos.sql`: las quedadas de ejemplo.
   (`3-permisos.sql` ya va incluido en el 1; solo hacía falta en proyectos creados antes.)
 - Si vuelves a ejecutar `2-ejemplos.sql`, las quedadas de ejemplo se renuevan con fechas de los próximos días. Las quedadas reales no se tocan.
 - Los cambios llegan solos y al momento: si alguien se apunta, lo ves sin recargar.
