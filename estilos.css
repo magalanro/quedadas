@@ -1224,6 +1224,7 @@ legend {
 .modal { max-height: calc(100dvh - 40px); overflow-y: auto; }
 
 .boton-google { margin: 4px 0 0; }
+.ayuda-acceso { margin: 14px 0 0; font-size: 14px; color: var(--tinta-suave); text-align: center; }
 
 .separador-acceso {
   display: flex;

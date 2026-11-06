@@ -428,6 +428,11 @@ function traducirError(error) {
     [/user already registered|already been registered/i, 'Ya hay una cuenta con ese email. Entra en vez de crear una nueva.'],
     [/email not confirmed/i, 'Falta confirmar tu email: abre el correo que te hemos enviado.'],
     [/password should be at least|password.*characters/i, 'La contraseña tiene que tener al menos 6 caracteres.'],
+    [/email.*not authorized|email_address_not_authorized/i, 'Ahora mismo no podemos mandar emails a esa dirección. Entra con Google, que va al momento.'],
+    [/email rate limit|over_email_send_rate_limit/i, 'Se han mandado demasiados emails en la última hora. Entra con Google o prueba más tarde.'],
+    [/token has expired|otp.*expired|invalid.*otp|token.*invalid/i, 'El código no es correcto o ha caducado. Pide otro email.'],
+    [/code verifier|flow state|pkce/i, 'Abre el enlace en el mismo navegador donde lo pediste, o escribe el código del email.'],
+    [/email link is invalid|link.*expired/i, 'El enlace ha caducado o ya se usó. Pide otro email.'],
     [/rate limit|too many requests|security purposes/i, 'Demasiados intentos seguidos. Espera un minuto y vuelve a probar.'],
     [/unable to validate email|invalid email|email address.*invalid/i, 'Ese email no parece válido.'],
     [/signups not allowed|signup is disabled/i, 'Ahora mismo no se pueden crear cuentas nuevas.'],
@@ -469,7 +474,7 @@ class AlmacenSupabase {
     await this.cargarUsuario(data.session);
     if (parametros.has('code') || errorAcceso) {
       history.replaceState(null, '', location.pathname + location.hash);
-      if (errorAcceso) setTimeout(() => avisar(`No se ha podido entrar con Google: ${errorAcceso}`, 'error'), 300);
+      if (errorAcceso) setTimeout(() => avisar(`No se ha podido entrar: ${traducirError(errorAcceso)}`, 'error'), 300);
     }
     try {
       const volver = sessionStorage.getItem('quedadas.volver');
@@ -600,17 +605,23 @@ class AlmacenSupabase {
     return true;
   }
 
-  async registrarse(nombre, email, contrasena) {
-    const opciones = { data: { nombre } };
-    if (location.protocol.startsWith('http')) opciones.emailRedirectTo = location.href.split('#')[0];
-    const { data, error } = await this.cliente.auth.signUp({ email, password: contrasena, options: opciones });
+  async enviarEnlace(email, nombre = '') {
+    try {
+      sessionStorage.setItem('quedadas.volver', location.hash);
+    } catch {}
+    const opciones = { shouldCreateUser: true, emailRedirectTo: location.origin + location.pathname };
+    if (nombre) opciones.data = { nombre: nombre.slice(0, 30) };
+    const { error } = await this.cliente.auth.signInWithOtp({ email, options: opciones });
     if (error) throw new Error(traducirError(error));
-    if (data.user && Array.isArray(data.user.identities) && !data.user.identities.length) {
-      throw new Error('Ya hay una cuenta con ese email. Entra en vez de crear una nueva.');
-    }
-    if (!data.session) return false;
+  }
+
+  async verificarCodigo(email, codigo) {
+    const { data, error } = await this.cliente.auth.verifyOtp({ email, token: codigo, type: 'email' });
+    if (error) throw new Error(traducirError(error));
     await this.cargarUsuario(data.session);
-    return true;
+    try {
+      sessionStorage.removeItem('quedadas.volver');
+    } catch {}
   }
 
   async cerrarSesion() {
@@ -998,87 +1009,136 @@ function pedirNombre(motivo) {
   });
 }
 
-function abrirAcceso(motivo, modoInicial = 'entrar') {
+function abrirAcceso(motivo) {
   return new Promise(resolver => {
-    let modo = modoInicial;
+    let modo = 'inicio';
+    let emailEnviado = '';
     const pintar = capa => {
-      const crear = modo === 'crear';
-      capa.querySelector('.modal').innerHTML = `
-        <h2>${crear ? 'Crea tu cuenta' : 'Entra en Quedadas'}</h2>
-        <p>${esc(motivo || 'Con tu cuenta puedes apuntarte, crear quedadas y escribir al grupo desde cualquier dispositivo.')}</p>
-        ${estado.almacen?.google ? `
-          <button type="button" class="boton secundario grande ancho boton-google" data-google>Continuar con Google</button>
-          <p class="separador-acceso"><span>o con tu email</span></p>` : ''}
-        <div class="selector-acceso" role="tablist">
-          <button type="button" role="tab" aria-selected="${!crear}" data-modo-acceso="entrar">Ya tengo cuenta</button>
-          <button type="button" role="tab" aria-selected="${crear}" data-modo-acceso="crear">Soy nuevo</button>
-        </div>
-        <form id="form-acceso" novalidate>
-          ${crear ? '<label class="campo"><span>Tu nombre</span><input name="nombre" required maxlength="30" autocomplete="given-name"></label>' : ''}
-          <label class="campo"><span>Email</span><input name="email" type="email" required autocomplete="email" inputmode="email"></label>
-          <label class="campo"><span>Contraseña</span><input name="contrasena" type="password" required minlength="6" autocomplete="${crear ? 'new-password' : 'current-password'}">${crear ? '<small class="ayuda">Mínimo 6 caracteres.</small>' : ''}</label>
-          <p class="error-form" id="error-acceso" role="alert" hidden></p>
-          <div class="acciones-modal">
-            <button type="button" class="boton secundario" data-cerrar>Ahora no</button>
-            <button class="boton primario" id="enviar-acceso">${crear ? 'Crear cuenta' : 'Entrar'}</button>
-          </div>
-        </form>`;
+      const modal = capa.querySelector('.modal');
+      if (modo === 'codigo') {
+        modal.innerHTML = `
+          <h2>Mira tu correo</h2>
+          <p>Te hemos enviado un email a <strong>${esc(emailEnviado)}</strong>. Pulsa el enlace del correo o escribe aquí el código que viene en él.</p>
+          <form id="form-codigo" novalidate>
+            <label class="campo"><span>Código del email</span><input name="codigo" inputmode="numeric" autocomplete="one-time-code" maxlength="10" required></label>
+            <p class="error-form" id="error-acceso" role="alert" hidden></p>
+            <div class="acciones-modal separadas">
+              <button type="button" class="boton terciario" data-otro-email>Usar otro email</button>
+              <button class="boton primario" id="enviar-acceso">Entrar</button>
+            </div>
+          </form>
+          <p class="ayuda-acceso">¿No te llega? Mira en la carpeta de spam o <button type="button" class="enlace" data-reenviar>pide otro email</button>.</p>`;
+      } else if (modo === 'contrasena') {
+        modal.innerHTML = `
+          <h2>Entrar con contraseña</h2>
+          <p>Solo para las cuentas que se crearon con contraseña.</p>
+          <form id="form-contrasena" novalidate>
+            <label class="campo"><span>Email</span><input name="email" type="email" required autocomplete="email" inputmode="email"></label>
+            <label class="campo"><span>Contraseña</span><input name="contrasena" type="password" required autocomplete="current-password"></label>
+            <p class="error-form" id="error-acceso" role="alert" hidden></p>
+            <div class="acciones-modal separadas">
+              <button type="button" class="boton terciario" data-volver-acceso>Volver</button>
+              <button class="boton primario" id="enviar-acceso">Entrar</button>
+            </div>
+          </form>`;
+      } else {
+        modal.innerHTML = `
+          <h2>Entra en Quedadas</h2>
+          <p>${esc(motivo || 'Para apuntarte, crear quedadas y hablar con el grupo.')} Sin contraseñas.</p>
+          ${estado.almacen?.google ? `
+            <button type="button" class="boton primario grande ancho boton-google" data-google>Continuar con Google</button>
+            <p class="separador-acceso"><span>o te mandamos un email</span></p>` : ''}
+          <form id="form-email" novalidate>
+            <label class="campo"><span>Tu email</span><input name="email" type="email" required autocomplete="email" inputmode="email"></label>
+            <label class="campo"><span>Tu nombre</span><input name="nombre" maxlength="30" autocomplete="given-name"><small class="ayuda">Lo verá la gente de tus quedadas. Si ya tienes cuenta, déjalo vacío.</small></label>
+            <p class="error-form" id="error-acceso" role="alert" hidden></p>
+            <div class="acciones-modal separadas">
+              <button type="button" class="boton terciario" data-cerrar>Ahora no</button>
+              <button class="boton ${estado.almacen?.google ? 'secundario' : 'primario'}" id="enviar-acceso">Enviarme el email</button>
+            </div>
+          </form>
+          <p class="ayuda-acceso"><button type="button" class="enlace" data-con-contrasena>Tengo una cuenta con contraseña</button></p>`;
+      }
+      const error = capa.querySelector('#error-acceso');
+      const mostrar = texto => { error.textContent = texto; error.hidden = false; };
+      const boton = capa.querySelector('#enviar-acceso');
+      const textoBoton = boton?.textContent;
+      const ocupado = (si, texto) => { if (!boton) return; boton.disabled = si; boton.textContent = si ? texto : textoBoton; };
+      const dentro = () => {
+        pintarUsuario();
+        avisar(`Hola, ${estado.usuario.nombre}`);
+        cerrarModal();
+      };
+      capa.querySelector('[data-cerrar]')?.addEventListener('click', cerrarModal);
+      capa.querySelector('[data-con-contrasena]')?.addEventListener('click', () => { modo = 'contrasena'; pintar(capa); });
+      capa.querySelector('[data-volver-acceso]')?.addEventListener('click', () => { modo = 'inicio'; pintar(capa); });
+      capa.querySelector('[data-otro-email]')?.addEventListener('click', () => { modo = 'inicio'; pintar(capa); });
+      capa.querySelector('[data-reenviar]')?.addEventListener('click', async ev => {
+        ev.currentTarget.disabled = true;
+        try {
+          await estado.almacen.enviarEnlace(emailEnviado);
+          avisar('Te hemos mandado otro email');
+        } catch (err) {
+          mostrar(traducirError(err));
+        }
+      });
       capa.querySelector('[data-google]')?.addEventListener('click', async ev => {
-        const boton = ev.currentTarget;
-        boton.disabled = true;
-        boton.textContent = 'Abriendo Google…';
+        const b = ev.currentTarget;
+        b.disabled = true;
+        b.textContent = 'Abriendo Google…';
         try {
           await estado.almacen.entrarConGoogle();
         } catch (err) {
-          boton.disabled = false;
-          boton.textContent = 'Continuar con Google';
-          const error = capa.querySelector('#error-acceso');
-          error.textContent = traducirError(err);
-          error.hidden = false;
+          b.disabled = false;
+          b.textContent = 'Continuar con Google';
+          mostrar(traducirError(err));
         }
       });
-      capa.querySelectorAll('[data-modo-acceso]').forEach(b => {
-        b.onclick = () => { modo = b.dataset.modoAcceso; pintar(capa); };
-      });
-      capa.querySelector('[data-cerrar]').onclick = cerrarModal;
-      capa.querySelector('form').onsubmit = async e => {
+      capa.querySelector('#form-email')?.addEventListener('submit', async e => {
         e.preventDefault();
-        const f = e.target;
-        const error = capa.querySelector('#error-acceso');
-        const boton = capa.querySelector('#enviar-acceso');
-        const mostrar = texto => { error.textContent = texto; error.hidden = false; };
-        const email = f.email.value.trim();
-        const contrasena = f.contrasena.value;
-        const nombre = f.nombre?.value.trim();
-        if (crear && !nombre) return mostrar('Escribe tu nombre: es lo que verá la gente de tus quedadas.');
+        const email = e.target.email.value.trim();
+        const nombre = e.target.nombre.value.trim();
         if (!/^\S+@\S+\.\S+$/.test(email)) return mostrar('Ese email no parece válido.');
-        if (contrasena.length < 6) return mostrar('La contraseña tiene que tener al menos 6 caracteres.');
-        boton.disabled = true;
-        boton.textContent = crear ? 'Creando cuenta…' : 'Entrando…';
+        ocupado(true, 'Enviando…');
         try {
-          if (crear) {
-            const dentro = await estado.almacen.registrarse(nombre, email, contrasena);
-            if (!dentro) {
-              capa.querySelector('.modal').innerHTML = `
-                <h2>Revisa tu correo</h2>
-                <p>Te hemos enviado un enlace a <strong>${esc(email)}</strong> para confirmar la cuenta. Ábrelo y después vuelve aquí y entra con tu email y contraseña.</p>
-                <div class="acciones-modal"><button class="boton primario" data-cerrar>Entendido</button></div>`;
-              capa.querySelector('[data-cerrar]').onclick = cerrarModal;
-              return;
-            }
-          } else {
-            await estado.almacen.entrar(email, contrasena);
-          }
-          pintarUsuario();
-          avisar(`Hola, ${estado.usuario.nombre}`);
-          cerrarModal();
+          await estado.almacen.enviarEnlace(email, nombre);
+          emailEnviado = email;
+          modo = 'codigo';
+          pintar(capa);
         } catch (err) {
           mostrar(traducirError(err));
-          boton.disabled = false;
-          boton.textContent = crear ? 'Crear cuenta' : 'Entrar';
+          ocupado(false);
         }
-      };
-      capa.querySelector('input')?.focus();
+      });
+      capa.querySelector('#form-codigo')?.addEventListener('submit', async e => {
+        e.preventDefault();
+        const codigo = e.target.codigo.value.replace(/\D/g, '');
+        if (codigo.length < 6) return mostrar('El código tiene 6 cifras o más. Cópialo del email.');
+        ocupado(true, 'Comprobando…');
+        try {
+          await estado.almacen.verificarCodigo(emailEnviado, codigo);
+          dentro();
+        } catch (err) {
+          mostrar(traducirError(err));
+          ocupado(false);
+        }
+      });
+      capa.querySelector('#form-contrasena')?.addEventListener('submit', async e => {
+        e.preventDefault();
+        const email = e.target.email.value.trim();
+        const contrasena = e.target.contrasena.value;
+        if (!/^\S+@\S+\.\S+$/.test(email)) return mostrar('Ese email no parece válido.');
+        if (!contrasena) return mostrar('Escribe tu contraseña.');
+        ocupado(true, 'Entrando…');
+        try {
+          await estado.almacen.entrar(email, contrasena);
+          dentro();
+        } catch (err) {
+          mostrar(traducirError(err));
+          ocupado(false);
+        }
+      });
+      capa.querySelector('form input')?.focus();
     };
     abrirModal('', capa => {
       capa.onCerrar = () => resolver(estado.usuario);
