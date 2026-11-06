@@ -655,6 +655,8 @@ button:disabled { cursor: default; }
 .boton.terciario { background: var(--blanco); border-color: var(--linea-fuerte); color: var(--tinta); font-weight: 600; font-size: 14.5px; min-height: 38px; padding: 0 12px; }
 .boton.terciario:hover:not(:disabled) { border-color: var(--tinta-suave); }
 .boton.terciario:disabled { opacity: .45; }
+.boton.peto { background: var(--peto); color: #fff; }
+.boton.peto:hover:not(:disabled) { background: var(--peto-oscuro); }
 .boton.peligro { background: var(--blanco); border-color: var(--peligro); color: var(--peligro); }
 .boton.peligro:hover { background: #FCEDEE; }
 .capa-modal .boton.peligro { background: var(--peligro); color: #fff; }
@@ -746,6 +748,10 @@ button:disabled { cursor: default; }
 .acciones-detalle { display: grid; }
 .acciones-detalle .boton { width: 100%; }
 
+.empujon { margin-top: 12px; padding: 12px 14px; background: var(--peto-suave); border-left: 4px solid var(--peto); border-radius: 8px; }
+.empujon p { margin: 0 0 10px; font-size: 15px; color: var(--tinta); }
+.empujon .boton { width: 100%; }
+.texto-compartir { width: 100%; resize: none; font: inherit; font-size: 15px; line-height: 1.4; }
 .acciones-secundarias { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .acciones-secundarias .boton { flex: 1 1 auto; }
 
@@ -963,7 +969,7 @@ legend {
 .campo small { font-weight: 400; color: var(--tinta-tenue); }
 .campo .ayuda { font-size: 13px; }
 
-.campo input, .campo select, .campo textarea, .enlace-copiar {
+.campo input, .campo select, .campo textarea, .enlace-copiar, .texto-compartir {
   width: 100%;
   min-height: 44px;
   padding: 9px 12px;
@@ -974,7 +980,7 @@ legend {
 
 .campo textarea { resize: vertical; }
 
-.campo input:focus, .campo select:focus, .campo textarea:focus, .enlace-copiar:focus {
+.campo input:focus, .campo select:focus, .campo textarea:focus, .enlace-copiar:focus, .texto-compartir:focus {
   outline: 0;
   border-color: var(--cesped);
   box-shadow: 0 0 0 3px var(--cesped-suave);

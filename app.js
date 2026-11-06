@@ -1439,7 +1439,7 @@ function noLeidos(a) {
 function htmlEstadoPlazas(a) {
   const p = plazas(a);
   if (p.completa) return `<span class="estado completa">Completa</span>`;
-  if (p.faltan > 0) return `<span class="estado faltan">Faltan ${p.faltan}</span>`;
+  if (p.faltan > 0) return `<span class="estado faltan">${p.faltan === 1 ? 'Falta' : 'Faltan'} ${p.faltan}</span>`;
   return `<span class="estado libres">${p.libres} ${p.libres === 1 ? 'plaza' : 'plazas'}</span>`;
 }
 
@@ -1744,7 +1744,7 @@ function htmlDetalle(a) {
   const atras = cuentaAtras(inicio);
   let estadoTexto;
   if (p.completa) estadoTexto = `Completa. ${a.espera.length ? `${a.espera.length} en lista de espera.` : 'Si te apuntas, entras en la lista de espera.'}`;
-  else if (p.faltan > 0) estadoTexto = `Faltan ${p.faltan} ${p.faltan === 1 ? 'persona' : 'personas'} para que se confirme (mínimo ${a.min}).`;
+  else if (p.faltan > 0) estadoTexto = `${p.faltan === 1 ? 'Falta 1 persona' : `Faltan ${p.faltan} personas`} para que se confirme (mínimo ${a.min}).`;
   else estadoTexto = `Confirmada. Quedan ${p.libres} ${p.libres === 1 ? 'plaza libre' : 'plazas libres'}.`;
 
   let botonPrincipal;
@@ -1788,8 +1788,9 @@ function htmlDetalle(a) {
         <div class="acciones-detalle">
           ${botonPrincipal}
         </div>
+        ${htmlEmpujon(a, p, apuntado || organiza)}
         <div class="acciones-secundarias">
-          <button class="boton terciario" data-accion="compartir">Copiar enlace</button>
+          <button class="boton terciario" data-accion="compartir">Compartir</button>
           <button class="boton terciario" data-accion="calendario">Añadir al calendario</button>
           ${puedeHacerEquipos(a) ? '<button class="boton terciario" data-accion="hacer-equipos">Hacer equipos</button>' : ''}
           <a class="boton terciario" href="https://www.google.com/maps/dir/?api=1&destination=${a.lugar.lat},${a.lugar.lng}" target="_blank" rel="noopener">Cómo llegar</a>
@@ -2550,17 +2551,68 @@ async function confirmarAsistencia() {
   }
 }
 
-async function copiarEnlace() {
-  const enlace = `${location.href.split('#')[0]}#a-${estado.seleccion}`;
-  try {
-    await navigator.clipboard.writeText(enlace);
-    avisar('Enlace copiado. Pégalo en tu grupo para invitar a gente.');
-  } catch {
-    abrirModal(`<h2>Enlace de la quedada</h2><p>Cópialo y compártelo:</p><input class="enlace-copiar" readonly value="${esc(enlace)}"><div class="acciones-modal"><button class="boton primario" data-cerrar>Hecho</button></div>`, capa => {
-      capa.querySelector('[data-cerrar]').onclick = cerrarModal;
-      capa.querySelector('input').select();
-    });
+function htmlEmpujon(a, p, voy) {
+  if (!voy || p.faltan <= 0 || haTerminado(a)) return '';
+  const quien = p.faltan === 1 ? '1 persona' : `${p.faltan} personas`;
+  return `
+    <div class="empujon">
+      <p><strong>Os ${p.faltan === 1 ? 'falta' : 'faltan'} ${quien}.</strong> Pásalo a tu grupo y que salga.</p>
+      <button class="boton peto" data-accion="compartir">Compartir por WhatsApp</button>
+    </div>`;
+}
+
+function textoCompartir(a) {
+  const d = DEPORTES[a.deporte] || DEPORTES.futbol;
+  const inicio = new Date(a.inicio);
+  const p = plazas(a);
+  let situacion;
+  if (p.completa) situacion = 'Está completa, pero puedes apuntarte a la lista de espera.';
+  else if (p.faltan > 0) situacion = p.faltan === 1 ? '¡Falta 1 persona para que salga!' : `¡Faltan ${p.faltan} personas para que salga!`;
+  else situacion = `Quedan ${p.libres} ${p.libres === 1 ? 'plaza' : 'plazas'}.`;
+  const extras = [a.nivel && a.nivel !== 'todos' ? `Nivel ${(NIVELES[a.nivel] || a.nivel).toLowerCase()}` : 'Todos los niveles', a.precio > 0 ? `${a.precio} € por persona` : 'Gratis'];
+  return [
+    `${d.icono} ${a.titulo}`,
+    `${etiquetaDia(inicio)}, ${formatoHora(inicio)} · ${a.lugar.nombre}`,
+    situacion,
+    extras.join(' · '),
+    'Apúntate aquí:'
+  ].join('\n');
+}
+
+async function compartirQuedada() {
+  const a = estado.actividades.find(x => x.id === estado.seleccion);
+  if (!a) return;
+  const enlace = `${location.href.split('#')[0]}#a-${a.id}`;
+  const texto = textoCompartir(a);
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: a.titulo, text: texto, url: enlace });
+      return;
+    } catch (error) {
+      if (error?.name === 'AbortError') return;
+    }
   }
+  const completo = `${texto}\n${enlace}`;
+  abrirModal(`
+    <h2>Compartir la quedada</h2>
+    <p>Este es el mensaje. Mándalo a tu grupo:</p>
+    <textarea class="texto-compartir" readonly rows="7">${esc(completo)}</textarea>
+    <div class="acciones-modal">
+      <a class="boton primario" href="https://wa.me/?text=${encodeURIComponent(completo)}" target="_blank" rel="noopener">Abrir WhatsApp</a>
+      <button class="boton secundario" data-copiar>Copiar</button>
+      <button class="boton terciario" data-cerrar>Cerrar</button>
+    </div>`, capa => {
+    capa.querySelector('[data-cerrar]').onclick = cerrarModal;
+    capa.querySelector('[data-copiar]').onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(completo);
+        avisar('Mensaje copiado. Pégalo en tu grupo.');
+        cerrarModal();
+      } catch {
+        capa.querySelector('textarea').select();
+      }
+    };
+  });
 }
 
 function escaparIcs(texto) {
@@ -2669,7 +2721,7 @@ document.addEventListener('click', async e => {
       accionSobreSeleccion(objetivo.dataset.accion);
       break;
     case 'compartir':
-      copiarEnlace();
+      compartirQuedada();
       break;
     case 'confirmar-si':
       confirmarAsistencia();
