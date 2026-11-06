@@ -1180,6 +1180,73 @@ legend {
   animation: aparecer .18s ease-out;
 }
 
+.modal { max-height: calc(100dvh - 40px); overflow-y: auto; }
+
+.boton-google { margin: 4px 0 0; }
+
+.separador-acceso {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0 12px;
+  color: var(--tinta-tenue);
+  font-size: 13.5px;
+}
+
+.separador-acceso::before, .separador-acceso::after { content: ''; flex: 1; height: 1px; background: var(--linea); }
+
+.fila-ajuste {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 4px 0 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--linea-fuerte);
+  border-radius: 12px;
+  background: var(--blanco);
+  text-align: left;
+}
+
+.fila-ajuste:hover { border-color: var(--tinta-suave); }
+.fila-ajuste > span:nth-child(2) { flex: 1; display: grid; }
+.fila-ajuste small { color: var(--tinta-tenue); font-size: 13.5px; }
+.icono-ajuste { font-size: 20px; }
+.flecha-ajuste { font-size: 24px; color: var(--tinta-tenue); line-height: 1; }
+
+.pasos-modal, .lista-ventajas { margin: 0 0 14px; padding-left: 22px; color: var(--tinta-suave); display: grid; gap: 6px; }
+
+.form-avisos { display: grid; gap: 12px; }
+.form-avisos .interruptor { font-size: 15.5px; }
+
+.caja-nuevas {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--papel);
+  border: 1px solid var(--linea);
+}
+
+.caja-nuevas .nota { margin: 0; }
+
+.banner-avisos {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: calc(100% - 40px);
+  margin: 16px 20px 0;
+  padding: 12px 14px;
+  border: 1.5px solid var(--cesped);
+  border-radius: 12px;
+  background: var(--cesped-suave);
+  color: var(--tinta);
+  font-size: 14.5px;
+  text-align: left;
+}
+
+.banner-avisos:hover { background: #D6EBDD; }
+
 .modal h2 { margin: 0 0 6px; font-family: var(--display); font-weight: 800; font-size: 28px; line-height: 1.05; }
 .modal p { margin: 0 0 14px; color: var(--tinta-suave); }
 .modal .nota { margin-top: 12px; }

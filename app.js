@@ -437,7 +437,12 @@ class AlmacenSupabase {
   constructor(config) {
     this.modo = 'nube';
     this.requiereCuenta = true;
-    this.cliente = window.supabase.createClient(config.supabaseUrl, config.supabaseKey);
+    this.config = config;
+    this.cliente = window.supabase.createClient(config.supabaseUrl, config.supabaseKey, {
+      auth: { flowType: 'pkce', detectSessionInUrl: true, persistSession: true }
+    });
+    this.google = false;
+    this.vapidPublica = config.vapidPublica || '';
     this.temporizador = null;
     this.chat = null;
     this.asistencia = false;
@@ -447,8 +452,26 @@ class AlmacenSupabase {
   }
 
   async iniciar() {
+    const parametros = new URLSearchParams(location.search);
+    const errorAcceso = parametros.get('error_description') || parametros.get('error');
+    const ajustes = fetch(`${this.config.supabaseUrl}/auth/v1/settings`, { headers: { apikey: this.config.supabaseKey } })
+      .then(r => r.ok ? r.json() : {})
+      .then(j => { this.google = !!j?.external?.google; })
+      .catch(() => {});
     const { data } = await this.cliente.auth.getSession();
     await this.cargarUsuario(data.session);
+    if (parametros.has('code') || errorAcceso) {
+      history.replaceState(null, '', location.pathname + location.hash);
+      if (errorAcceso) setTimeout(() => avisar(`No se ha podido entrar con Google: ${errorAcceso}`, 'error'), 300);
+    }
+    try {
+      const volver = sessionStorage.getItem('quedadas.volver');
+      if (volver) {
+        sessionStorage.removeItem('quedadas.volver');
+        if (!location.hash && /^#a-[\w-]+$/.test(volver)) history.replaceState(null, '', location.pathname + volver);
+      }
+    } catch {}
+    await ajustes;
     this.cliente.auth.onAuthStateChange((evento, sesion) => {
       if (evento === 'INITIAL_SESSION') return;
       setTimeout(async () => {
@@ -457,6 +480,7 @@ class AlmacenSupabase {
         if (antes !== estado.usuario?.id) {
           await refrescar();
           pintarVista();
+          avisosMovil.sincronizar();
         }
       }, 0);
     });
@@ -513,7 +537,37 @@ class AlmacenSupabase {
       const { data } = await this.cliente.from('perfiles').insert({ id: usuario.id, nombre }).select('id, nombre').single();
       perfil = data || { id: usuario.id, nombre };
     }
-    estado.usuario = { id: usuario.id, nombre: perfil.nombre, email: usuario.email };
+    estado.usuario = { id: usuario.id, nombre: perfil.nombre, email: usuario.email, proveedor: usuario.app_metadata?.provider || 'email' };
+  }
+
+  async entrarConGoogle() {
+    try {
+      sessionStorage.setItem('quedadas.volver', location.hash);
+    } catch {}
+    const { error } = await this.cliente.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: location.origin + location.pathname, queryParams: { prompt: 'select_account' } }
+    });
+    if (error) throw new Error(traducirError(error));
+  }
+
+  async guardarSuscripcion(endpoint, p256dh, auth) {
+    const { error } = await this.cliente.rpc('guardar_suscripcion', { p_endpoint: endpoint, p_p256dh: p256dh, p_auth: auth });
+    if (error) throw new Error(/function|schema cache|could not find/i.test(error.message) ? 'Los avisos todavía no están activados en la base de datos (falta el script 5).' : traducirError(error));
+  }
+
+  async borrarSuscripcion(endpoint) {
+    await this.cliente.rpc('borrar_suscripcion', { p_endpoint: endpoint }).then(() => {}, () => {});
+  }
+
+  async leerPreferencias() {
+    const { data } = await this.cliente.from('preferencias_avisos').select('*').eq('usuario_id', estado.usuario.id).maybeSingle();
+    return data;
+  }
+
+  async guardarPreferencias(preferencias) {
+    const { error } = await this.cliente.from('preferencias_avisos').upsert({ ...preferencias, usuario_id: estado.usuario.id, actualizada: new Date().toISOString() }, { onConflict: 'usuario_id' });
+    if (error) throw new Error(traducirError(error));
   }
 
   async entrar(email, contrasena) {
@@ -538,6 +592,7 @@ class AlmacenSupabase {
   }
 
   async cerrarSesion() {
+    await avisosMovil.olvidarEnEsteDispositivo();
     await this.cliente.auth.signOut();
     estado.usuario = null;
   }
@@ -663,6 +718,104 @@ class AlmacenSupabase {
   }
 }
 
+function base64UrlABytes(texto) {
+  const relleno = '='.repeat((4 - texto.length % 4) % 4);
+  const binario = atob((texto + relleno).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(binario, c => c.charCodeAt(0));
+}
+
+const avisosMovil = {
+  registro: null,
+  estado: 'no-disponible',
+
+  soportado() {
+    return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  },
+
+  esIOS() {
+    return /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  },
+
+  instalada() {
+    return window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  },
+
+  configurado() {
+    const seguro = location.protocol === 'https:' || ['localhost', '127.0.0.1'].includes(location.hostname);
+    return seguro && !!estado.almacen?.vapidPublica && !!estado.almacen?.guardarSuscripcion;
+  },
+
+  async obtenerRegistro() {
+    if (!this.registro) this.registro = await navigator.serviceWorker.register('sw.js');
+    return this.registro;
+  },
+
+  async suscripcionActual() {
+    if (!this.soportado()) return null;
+    const registro = await navigator.serviceWorker.getRegistration();
+    return registro ? registro.pushManager.getSubscription() : null;
+  },
+
+  async calcularEstado() {
+    let resultado;
+    if (!this.configurado()) resultado = 'no-disponible';
+    else if (this.esIOS() && !this.instalada()) resultado = 'ios-instalar';
+    else if (!this.soportado()) resultado = 'no-soportado';
+    else if (Notification.permission === 'denied') resultado = 'bloqueado';
+    else if (Notification.permission === 'granted' && await this.suscripcionActual()) resultado = 'activado';
+    else resultado = 'desactivado';
+    this.estado = resultado;
+    return resultado;
+  },
+
+  async activar() {
+    if (!estado.usuario) throw new Error('Entra con tu cuenta para activar los avisos.');
+    const permiso = await Notification.requestPermission();
+    if (permiso !== 'granted') {
+      await this.calcularEstado();
+      throw new Error(permiso === 'denied'
+        ? 'Has bloqueado las notificaciones. Permítelas en los ajustes del navegador para esta web.'
+        : 'No se han activado las notificaciones.');
+    }
+    const registro = await this.obtenerRegistro();
+    await navigator.serviceWorker.ready;
+    let suscripcion = await registro.pushManager.getSubscription();
+    if (!suscripcion) {
+      suscripcion = await registro.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: base64UrlABytes(estado.almacen.vapidPublica) });
+    }
+    const datos = suscripcion.toJSON();
+    await estado.almacen.guardarSuscripcion(datos.endpoint, datos.keys.p256dh, datos.keys.auth);
+    await this.calcularEstado();
+  },
+
+  async desactivar() {
+    const suscripcion = await this.suscripcionActual();
+    if (suscripcion) {
+      await estado.almacen.borrarSuscripcion(suscripcion.endpoint);
+      await suscripcion.unsubscribe();
+    }
+    await this.calcularEstado();
+  },
+
+  async olvidarEnEsteDispositivo() {
+    try {
+      const suscripcion = await this.suscripcionActual();
+      if (suscripcion) await estado.almacen.borrarSuscripcion(suscripcion.endpoint);
+    } catch {}
+  },
+
+  async sincronizar() {
+    try {
+      if (this.configurado() && this.soportado()) await this.obtenerRegistro();
+      await this.calcularEstado();
+      if (this.estado === 'activado' && estado.usuario) {
+        const datos = (await this.suscripcionActual()).toJSON();
+        await estado.almacen.guardarSuscripcion(datos.endpoint, datos.keys.p256dh, datos.keys.auth);
+      }
+    } catch {}
+  }
+};
+
 async function elegirAlmacen() {
   const config = window.QUEDADAS_CONFIG;
   if (config?.supabaseUrl && config?.supabaseKey && window.supabase?.createClient) {
@@ -753,6 +906,9 @@ function abrirAcceso(motivo, modoInicial = 'entrar') {
       capa.querySelector('.modal').innerHTML = `
         <h2>${crear ? 'Crea tu cuenta' : 'Entra en Quedadas'}</h2>
         <p>${esc(motivo || 'Con tu cuenta puedes apuntarte, crear quedadas y escribir al grupo desde cualquier dispositivo.')}</p>
+        ${estado.almacen?.google ? `
+          <button type="button" class="boton secundario grande ancho boton-google" data-google>Continuar con Google</button>
+          <p class="separador-acceso"><span>o con tu email</span></p>` : ''}
         <div class="selector-acceso" role="tablist">
           <button type="button" role="tab" aria-selected="${!crear}" data-modo-acceso="entrar">Ya tengo cuenta</button>
           <button type="button" role="tab" aria-selected="${crear}" data-modo-acceso="crear">Soy nuevo</button>
@@ -767,6 +923,20 @@ function abrirAcceso(motivo, modoInicial = 'entrar') {
             <button class="boton primario" id="enviar-acceso">${crear ? 'Crear cuenta' : 'Entrar'}</button>
           </div>
         </form>`;
+      capa.querySelector('[data-google]')?.addEventListener('click', async ev => {
+        const boton = ev.currentTarget;
+        boton.disabled = true;
+        boton.textContent = 'Abriendo Google…';
+        try {
+          await estado.almacen.entrarConGoogle();
+        } catch (err) {
+          boton.disabled = false;
+          boton.textContent = 'Continuar con Google';
+          const error = capa.querySelector('#error-acceso');
+          error.textContent = traducirError(err);
+          error.hidden = false;
+        }
+      });
       capa.querySelectorAll('[data-modo-acceso]').forEach(b => {
         b.onclick = () => { modo = b.dataset.modoAcceso; pintar(capa); };
       });
@@ -820,7 +990,13 @@ function abrirAcceso(motivo, modoInicial = 'entrar') {
 function abrirPerfilNube() {
   abrirModal(`
     <h2>Tu perfil</h2>
-    <p>Has entrado como <strong>${esc(estado.usuario.email || '')}</strong>.</p>
+    <p>${estado.usuario.proveedor === 'google' ? 'Has entrado con Google' : 'Has entrado'} como <strong>${esc(estado.usuario.email || '')}</strong>.</p>
+    ${avisosMovil.configurado() ? `
+      <button type="button" class="fila-ajuste" data-abrir-avisos>
+        <span class="icono-ajuste" aria-hidden="true">🔔</span>
+        <span><strong>Avisos en el móvil</strong><small>${avisosMovil.estado === 'activado' ? 'Activados en este dispositivo' : 'Desactivados'}</small></span>
+        <span aria-hidden="true" class="flecha-ajuste">›</span>
+      </button>` : ''}
     <form id="form-perfil">
       <label class="campo"><span>Tu nombre</span><input name="nombre" required maxlength="30" value="${esc(estado.usuario.nombre)}"></label>
       <p class="error-form" id="error-perfil" role="alert" hidden></p>
@@ -829,6 +1005,7 @@ function abrirPerfilNube() {
         <button class="boton primario">Guardar nombre</button>
       </div>
     </form>`, capa => {
+    capa.querySelector('[data-abrir-avisos]')?.addEventListener('click', () => abrirAvisos());
     capa.querySelector('[data-salir]').onclick = async () => {
       await estado.almacen.cerrarSesion();
       cerrarModal();
@@ -853,6 +1030,158 @@ function abrirPerfilNube() {
       }
     };
   });
+}
+
+const PREFERENCIAS_POR_DEFECTO = { recordatorios: true, chat: true, plazas: true, nuevas: false, deportes: [], radio_km: 5 };
+
+function textoEstadoAvisos(estadoAvisos) {
+  const textos = {
+    'no-disponible': '<p>Los avisos funcionan en la app publicada (<strong>magalanro.github.io/quedadas</strong>) y con tu cuenta iniciada.</p>',
+    'ios-instalar': `
+      <p>En iPhone y iPad los avisos solo funcionan si Quedadas está en tu pantalla de inicio:</p>
+      <ol class="pasos-modal">
+        <li>Pulsa el botón <strong>Compartir</strong> de Safari (el cuadrado con la flecha).</li>
+        <li>Elige <strong>Añadir a pantalla de inicio</strong>.</li>
+        <li>Abre Quedadas desde el icono nuevo y vuelve aquí.</li>
+      </ol>`,
+    'no-soportado': '<p>Este navegador no permite notificaciones. Prueba con Chrome, Edge, Firefox o Safari actualizados.</p>',
+    'bloqueado': '<p>Las notificaciones están <strong>bloqueadas</strong> para esta web. Permítelas en los ajustes del navegador (en el candado junto a la dirección, apartado Notificaciones) y vuelve a intentarlo.</p>'
+  };
+  return textos[estadoAvisos] || '';
+}
+
+async function abrirAvisos() {
+  await avisosMovil.calcularEstado();
+  let preferencias = { ...PREFERENCIAS_POR_DEFECTO };
+  if (avisosMovil.estado === 'activado') {
+    try {
+      preferencias = { ...preferencias, ...(await estado.almacen.leerPreferencias() || {}) };
+    } catch {}
+  }
+  const pintar = capa => {
+    const e = avisosMovil.estado;
+    const modal = capa.querySelector('.modal');
+    if (e !== 'activado' && e !== 'desactivado') {
+      modal.innerHTML = `<h2>Avisos en el móvil</h2>${textoEstadoAvisos(e)}<div class="acciones-modal"><button class="boton primario" data-cerrar>Entendido</button></div>`;
+      modal.querySelector('[data-cerrar]').onclick = cerrarModal;
+      return;
+    }
+    if (e === 'desactivado') {
+      modal.innerHTML = `
+        <h2>Avisos en el móvil</h2>
+        <p>Te mandamos una notificación aunque tengas la app cerrada:</p>
+        <ul class="lista-ventajas">
+          <li>1 hora antes de cada quedada, y 3 horas antes para confirmar que vas.</li>
+          <li>Cuando alguien escribe en el chat de tus quedadas.</li>
+          <li>Si entras desde la lista de espera.</li>
+        </ul>
+        <p class="error-form" id="error-avisos" role="alert" hidden></p>
+        <div class="acciones-modal">
+          <button class="boton secundario" data-cerrar>Ahora no</button>
+          <button class="boton primario" data-activar>Activar avisos</button>
+        </div>`;
+      modal.querySelector('[data-cerrar]').onclick = cerrarModal;
+      modal.querySelector('[data-activar]').onclick = async ev => {
+        const boton = ev.currentTarget;
+        boton.disabled = true;
+        boton.textContent = 'Activando…';
+        try {
+          await avisosMovil.activar();
+          avisar('Avisos activados en este dispositivo');
+          pintar(capa);
+        } catch (err) {
+          const el = modal.querySelector('#error-avisos');
+          el.textContent = traducirError(err);
+          el.hidden = false;
+          if (avisosMovil.estado !== 'desactivado') pintar(capa);
+          else {
+            boton.disabled = false;
+            boton.textContent = 'Activar avisos';
+          }
+        }
+      };
+      return;
+    }
+    const p = preferencias;
+    const chips = Object.entries(DEPORTES).map(([clave, d]) => `
+      <button type="button" class="chip" data-deporte-aviso="${clave}" aria-pressed="${p.deportes.includes(clave)}" style="--c:${d.color}"><span aria-hidden="true">${d.icono}</span>${d.nombre}</button>`).join('');
+    modal.innerHTML = `
+      <h2>Avisos en el móvil</h2>
+      <p class="confirmacion-hecha">✓ Activados en este dispositivo</p>
+      <form id="form-avisos" class="form-avisos">
+        <label class="interruptor"><input type="checkbox" name="recordatorios" ${p.recordatorios ? 'checked' : ''}><span>Recordatorios de mis quedadas</span></label>
+        <label class="interruptor"><input type="checkbox" name="chat" ${p.chat ? 'checked' : ''}><span>Mensajes del chat</span></label>
+        <label class="interruptor"><input type="checkbox" name="plazas" ${p.plazas ? 'checked' : ''}><span>Cambios en la lista de espera</span></label>
+        <label class="interruptor"><input type="checkbox" name="nuevas" ${p.nuevas ? 'checked' : ''}><span>Quedadas nuevas cerca de mí</span></label>
+        ${p.nuevas ? `
+          <div class="caja-nuevas">
+            <p class="nota">Elige deportes (si no eliges ninguno, te avisamos de todos):</p>
+            <div class="chips envolver">${chips}</div>
+            <label class="campo"><span>Distancia</span><select name="radio_km">${[2, 5, 10, 20].map(km => `<option value="${km}" ${km === p.radio_km ? 'selected' : ''}>A menos de ${km} km</option>`).join('')}</select></label>
+            <p class="nota">${estado.origenEsUsuario ? 'Contamos la distancia desde tu ubicación actual.' : 'Contamos la distancia desde Puerta del Sol. Pulsa el botón de ubicación del mapa para usar la tuya.'}</p>
+          </div>` : ''}
+        <p class="error-form" id="error-avisos" role="alert" hidden></p>
+        <div class="acciones-modal separadas">
+          <button type="button" class="boton secundario" data-desactivar>Desactivar aquí</button>
+          <button class="boton primario">Guardar</button>
+        </div>
+      </form>`;
+    const form = modal.querySelector('form');
+    const leer = () => {
+      p.recordatorios = form.recordatorios.checked;
+      p.chat = form.chat.checked;
+      p.plazas = form.plazas.checked;
+      p.nuevas = form.nuevas.checked;
+      if (form.radio_km) p.radio_km = Number(form.radio_km.value);
+    };
+    form.nuevas.onchange = () => { leer(); pintar(capa); };
+    modal.querySelectorAll('[data-deporte-aviso]').forEach(b => {
+      b.onclick = () => {
+        leer();
+        const clave = b.dataset.deporteAviso;
+        p.deportes = p.deportes.includes(clave) ? p.deportes.filter(x => x !== clave) : [...p.deportes, clave];
+        b.setAttribute('aria-pressed', String(p.deportes.includes(clave)));
+      };
+    });
+    modal.querySelector('[data-desactivar]').onclick = async () => {
+      await avisosMovil.desactivar();
+      avisar('Avisos desactivados en este dispositivo');
+      pintar(capa);
+    };
+    form.onsubmit = async ev => {
+      ev.preventDefault();
+      leer();
+      try {
+        await estado.almacen.guardarPreferencias({
+          recordatorios: p.recordatorios,
+          chat: p.chat,
+          plazas: p.plazas,
+          nuevas: p.nuevas,
+          deportes: p.deportes,
+          radio_km: p.radio_km,
+          lat: estado.origen.lat,
+          lng: estado.origen.lng
+        });
+        cerrarModal();
+        avisar('Avisos guardados');
+      } catch (err) {
+        const el = modal.querySelector('#error-avisos');
+        el.textContent = traducirError(err);
+        el.hidden = false;
+      }
+    };
+  };
+  abrirModal('', capa => pintar(capa));
+}
+
+async function invitarAAvisos() {
+  try {
+    if (leerLocal('quedadas.invitacion-avisos', false)) return;
+    await avisosMovil.calcularEstado();
+    if (!['desactivado', 'ios-instalar'].includes(avisosMovil.estado)) return;
+    guardarLocal('quedadas.invitacion-avisos', true);
+    setTimeout(() => { if ($('#modal').hidden) abrirAvisos(); }, 700);
+  } catch {}
 }
 
 function abrirPerfil() {
@@ -1330,6 +1659,15 @@ function htmlDetalle(a) {
     </article>`;
 }
 
+function htmlBannerAvisos() {
+  if (!estado.usuario || !avisosMovil.configurado() || !['desactivado', 'ios-instalar'].includes(avisosMovil.estado)) return '';
+  return `
+    <button class="banner-avisos" data-accion="abrir-avisos">
+      <span aria-hidden="true">🔔</span>
+      <span><strong>Activa los avisos</strong> y te recordamos tus planes, te avisamos si alguien escribe o si entras desde la lista de espera.</span>
+    </button>`;
+}
+
 function htmlPlanes() {
   const lista = misPlanes();
   if (!estado.usuario || !lista.length) {
@@ -1349,7 +1687,7 @@ function htmlPlanes() {
     if (!grupos.has(clave)) grupos.set(clave, []);
     grupos.get(clave).push(a);
   }
-  return [...grupos].map(([dia, acts]) => `
+  return htmlBannerAvisos() + [...grupos].map(([dia, acts]) => `
     <section class="grupo-dia">
       <h2>${dia}</h2>
       <ul class="lista">${acts.map(a => htmlFila(a, distanciaKm(estado.origen, a.lugar))).join('')}</ul>
@@ -1835,6 +2173,7 @@ async function accionSobreSeleccion(tipo) {
       const completa = plazas(a).completa;
       await estado.almacen.apuntarse(id, usuario);
       avisar(completa ? 'Te has apuntado a la lista de espera' : '¡Apuntado! Nos vemos allí');
+      invitarAAvisos();
     } else if (tipo === 'salir') {
       await estado.almacen.salir(id, estado.usuario);
       avisar('Te has borrado de la quedada');
@@ -2081,6 +2420,9 @@ document.addEventListener('click', async e => {
     case 'confirmar-si':
       confirmarAsistencia();
       break;
+    case 'abrir-avisos':
+      abrirAvisos();
+      break;
     case 'editar-aviso':
       editarAviso();
       break;
@@ -2221,7 +2563,16 @@ async function arrancar() {
   pintarUsuario();
   await refrescar();
   estado.cargando = false;
+  await avisosMovil.sincronizar();
   pintarVista(true);
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('message', ev => {
+      if (ev.data?.tipo !== 'abrir') return;
+      const destino = new URL(ev.data.url, location.href);
+      if (destino.hash && destino.hash !== location.hash) location.hash = destino.hash;
+      else abrirDesdeHash();
+    });
+  }
   abrirDesdeHash();
   intentarUbicacionAutomatica();
   setInterval(sondear, estado.almacen.modo === 'nube' ? 30000 : estado.almacen.modo === 'local' ? 60000 : 8000);

@@ -13,6 +13,8 @@ Una app para encontrar gente con la que hacer deporte cerca de ti: ves en un **m
 - **Escribir mensajes** al grupo, **copiar el enlace** para invitar a gente, **añadir al calendario** y abrir **cómo llegar**.
 - **Mis planes**: todo lo que tienes pendiente, ordenado por día, con aviso de mensajes nuevos.
 - **Chat de cada quedada**: solo lo ven las personas apuntadas. Incluye mensajes automáticos ("Ana se ha apuntado", "Ya sois 12: ¡quedada confirmada!"), un aviso fijado por quien organiza ("Pista 3, puerta norte") y el aviso de "está escribiendo…".
+- **Avisos en el móvil**: notificaciones aunque la app esté cerrada (1 hora antes, "¿Sigues yendo?", mensajes del chat, plaza desde la lista de espera y quedadas nuevas cerca de los deportes que elijas). En iPhone hay que añadir la app a la pantalla de inicio primero.
+- **Entrar con Google**: el botón aparece solo cuando Google está activado en Supabase.
 - **Confirmar asistencia**: 3 horas antes te pregunta "¿Sigues yendo?". Si no confirmas y hay gente en lista de espera, una hora antes tu plaza pasa al primero que espera. Así hay menos plantones.
 
 ## Modo nube con Supabase (el que se usa ahora)
@@ -23,10 +25,19 @@ Una app para encontrar gente con la que hacer deporte cerca de ti: ves en un **m
 - Los scripts de la base de datos están en la carpeta `supabase/`. Se pegan en Supabase, en **SQL Editor**, y se pulsa **Run**. En un proyecto nuevo, el orden es:
   1. `1-estructura.sql`: tablas, reglas de seguridad y permisos.
   2. `4-chat-y-asistencia.sql`: chat de cada quedada, mensajes automáticos, aviso fijado y confirmación de asistencia.
-  3. `2-ejemplos.sql`: las quedadas de ejemplo.
+  3. `5-avisos-y-google.sql`: notificaciones en el móvil y nombre de perfil para quien entra con Google.
+  4. `2-ejemplos.sql`: las quedadas de ejemplo.
   (`3-permisos.sql` ya va incluido en el 1; solo hacía falta en proyectos creados antes.)
 - Si vuelves a ejecutar `2-ejemplos.sql`, las quedadas de ejemplo se renuevan con fechas de los próximos días. Las quedadas reales no se tocan.
 - Los cambios llegan solos y al momento: si alguien se apunta, lo ves sin recargar.
+
+### Cómo funcionan los avisos
+
+1. Al activar los avisos, el navegador crea una **suscripción**: una dirección única de ese móvil en el servicio de notificaciones de Google, Apple o Mozilla. La app la guarda en la tabla `suscripciones_push`.
+2. Cuando pasa algo (un mensaje, una plaza libre, falta 1 hora), la base de datos apunta el aviso en `avisos_pendientes` y llama a la función `enviar-avisos`.
+3. Esa función (`supabase/functions/enviar-avisos/index.ts`, instalada en Supabase como Edge Function) firma cada aviso con la clave privada VAPID y lo manda al móvil. El archivo `sw.js` de la app lo recibe y lo muestra aunque la app esté cerrada.
+
+La clave pública VAPID está en `config.js`. La privada solo se guarda en Supabase (Edge Functions, Secrets) y nunca en este repositorio.
 
 Si vacías `config.js`, la app vuelve a funcionar en modo local o con `servidor.py`, como se explica abajo.
 
