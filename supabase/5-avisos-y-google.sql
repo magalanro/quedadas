@@ -23,7 +23,7 @@ $$;
 
 do $$
 begin
-  create extension if not exists pg_net;
+  create extension if not exists pg_net with schema extensions;
 exception
   when others then raise notice 'pg_net no disponible: %', sqlerrm;
 end;

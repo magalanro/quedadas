@@ -37,7 +37,8 @@ create policy "borrar mi mensaje" on public.mensajes for delete to authenticated
 
 grant select, insert, delete on public.mensajes to authenticated;
 grant select on public.mensajes to anon;
-grant execute on function public.puede_ver_chat(uuid) to anon, authenticated;
+revoke execute on function public.puede_ver_chat(uuid) from public, anon;
+grant execute on function public.puede_ver_chat(uuid) to authenticated;
 
 insert into public.mensajes (actividad_id, autor_id, tipo, texto, creada)
 select c.actividad_id, c.autor_id, 'texto', c.texto, c.creada
@@ -253,7 +254,7 @@ revoke execute on function public.avisar_cambio_inscripcion() from public, anon,
 revoke execute on function public.avisar_aviso_fijado() from public, anon, authenticated;
 revoke execute on function public.confirmar(uuid, boolean) from public, anon;
 grant execute on function public.confirmar(uuid, boolean) to authenticated;
-grant execute on function public.liberar_sin_confirmar() to anon, authenticated;
+revoke execute on function public.liberar_sin_confirmar() from public, anon, authenticated;
 
 do $$
 begin

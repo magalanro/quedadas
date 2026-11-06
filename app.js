@@ -447,7 +447,6 @@ class AlmacenSupabase {
     this.temporizador = null;
     this.chat = null;
     this.asistencia = false;
-    this.ultimaLiberacion = 0;
     this.canalChat = null;
     this.ultimoAvisoEscribiendo = 0;
   }
@@ -656,10 +655,6 @@ class AlmacenSupabase {
   }
 
   async listar() {
-    if (this.chat && Date.now() - this.ultimaLiberacion > 60000) {
-      this.ultimaLiberacion = Date.now();
-      await this.cliente.rpc('liberar_sin_confirmar').then(() => {}, () => {});
-    }
     let respuesta = await this.consulta(this.chat !== false);
     if (respuesta.error && this.chat !== false) {
       const antigua = await this.consulta(false);
