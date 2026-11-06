@@ -12,6 +12,10 @@ const DEPORTES = {
   calistenia: { nombre: 'Calistenia', icono: '💪', color: '#4B5568', plazas: [2, 10], duracion: 60 }
 };
 
+const DIAS = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo'];
+const DIAS_PLURAL = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábados', 'domingos'];
+const DEPORTES_DE_EQUIPO = new Set(['futbol', 'futbolsala', 'baloncesto', 'voley', 'padel']);
+
 const NIVELES = {
   todos: 'Todos los niveles',
   principiante: 'Principiante',
@@ -40,6 +44,7 @@ const estado = {
   borrador: null,
   limitesMapa: null,
   scrollLista: 0,
+  misGrupos: [],
   filtros: {
     texto: '',
     deportes: new Set(),
@@ -447,6 +452,8 @@ class AlmacenSupabase {
     this.temporizador = null;
     this.chat = null;
     this.asistencia = false;
+    this.nivel = null;
+    this.gruposDisponibles = false;
     this.canalChat = null;
     this.ultimoAvisoEscribiendo = 0;
   }
@@ -493,6 +500,8 @@ class AlmacenSupabase {
     this.cliente
       .channel('cambios-chat')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'mensajes' }, () => this.cambio())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'grupos' }, () => this.cambio())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'miembros_grupo' }, () => this.cambio())
       .subscribe();
   }
 
@@ -641,34 +650,107 @@ class AlmacenSupabase {
       apuntados: inscripciones.filter(i => i.estado === 'dentro').map(persona),
       espera: inscripciones.filter(i => i.estado === 'espera').map(persona),
       aviso: f.aviso || '',
+      grupo: this.convertirGrupo(f.grupo),
       mensajes,
       creada: f.creada
     };
   }
 
-  consulta(conChat) {
+  consulta(nivel) {
     const desde = new Date(Date.now() - 12 * 3600000).toISOString();
-    const campos = conChat
-      ? '*, organizador_perfil:perfiles!organizador(id, nombre), inscripciones(usuario_id, estado, confirmada, creada, perfil:perfiles(id, nombre)), mensajes(id, tipo, texto, creada, autor:perfiles(id, nombre))'
-      : '*, organizador_perfil:perfiles!organizador(id, nombre), inscripciones(usuario_id, estado, creada, perfil:perfiles(id, nombre)), comentarios(id, texto, creada, autor:perfiles(id, nombre))';
+    const base = '*, organizador_perfil:perfiles!organizador(id, nombre), ';
+    const campos = {
+      2: base + 'inscripciones(usuario_id, estado, confirmada, creada, perfil:perfiles(id, nombre)), mensajes(id, tipo, texto, creada, autor:perfiles(id, nombre)), grupo:grupos(id, nombre, dia_semana, hora, activo, creador, miembros_grupo(usuario_id))',
+      1: base + 'inscripciones(usuario_id, estado, confirmada, creada, perfil:perfiles(id, nombre)), mensajes(id, tipo, texto, creada, autor:perfiles(id, nombre))',
+      0: base + 'inscripciones(usuario_id, estado, creada, perfil:perfiles(id, nombre)), comentarios(id, texto, creada, autor:perfiles(id, nombre))'
+    }[nivel];
     return this.cliente.from('actividades').select(campos).gte('inicio', desde).order('inicio').limit(500);
   }
 
   async listar() {
-    let respuesta = await this.consulta(this.chat !== false);
-    if (respuesta.error && this.chat !== false) {
-      const antigua = await this.consulta(false);
-      if (!antigua.error) {
-        this.chat = false;
-        this.asistencia = false;
-        respuesta = antigua;
+    let respuesta = null;
+    const niveles = this.nivel == null ? [2, 1, 0] : [this.nivel];
+    for (const nivel of niveles) {
+      respuesta = await this.consulta(nivel);
+      if (!respuesta.error) {
+        this.nivel = nivel;
+        break;
       }
-    } else if (!respuesta.error && this.chat === null) {
-      this.chat = true;
-      this.asistencia = true;
     }
     if (respuesta.error) throw new Error(traducirError(respuesta.error));
+    this.chat = this.nivel >= 1;
+    this.asistencia = this.nivel >= 1;
+    this.gruposDisponibles = this.nivel >= 2;
+    estado.misGrupos = this.gruposDisponibles && estado.usuario ? await this.leerMisGrupos() : [];
     return respuesta.data.map(f => this.convertir(f));
+  }
+
+  convertirGrupo(g) {
+    if (!g) return null;
+    return {
+      id: g.id,
+      nombre: g.nombre,
+      deporte: g.deporte,
+      diaSemana: g.dia_semana,
+      hora: String(g.hora || '').slice(0, 5),
+      activo: g.activo,
+      creador: g.creador,
+      lugar: g.lugar_nombre,
+      miembros: (g.miembros_grupo || []).map(m => m.usuario_id)
+    };
+  }
+
+  async leerMisGrupos() {
+    const { data, error } = await this.cliente
+      .from('miembros_grupo')
+      .select('grupo:grupos(id, nombre, deporte, dia_semana, hora, activo, creador, lugar_nombre, miembros_grupo(usuario_id))')
+      .eq('usuario_id', estado.usuario.id);
+    if (error) return [];
+    return (data || []).map(f => this.convertirGrupo(f.grupo)).filter(Boolean);
+  }
+
+  async crearGrupo(datos, nombreGrupo) {
+    const inicio = new Date(datos.inicio);
+    const pad = n => String(n).padStart(2, '0');
+    const { data, error } = await this.cliente.from('grupos').insert({
+      nombre: nombreGrupo,
+      deporte: datos.deporte,
+      descripcion: datos.descripcion,
+      dia_semana: inicio.getDay() || 7,
+      hora: `${pad(inicio.getHours())}:${pad(inicio.getMinutes())}`,
+      desde: `${inicio.getFullYear()}-${pad(inicio.getMonth() + 1)}-${pad(inicio.getDate())}`,
+      duracion_min: datos.duracionMin,
+      lugar_nombre: datos.lugar.nombre,
+      lat: datos.lugar.lat,
+      lng: datos.lugar.lng,
+      ruta: datos.ruta,
+      ritmo: datos.ritmo,
+      nivel: datos.nivel,
+      min: datos.min,
+      max: datos.max,
+      precio: datos.precio
+    }).select('id').single();
+    if (error) throw new Error(traducirError(error));
+    const { data: actividad } = await this.cliente.from('actividades').select('id').eq('grupo_id', data.id).order('inicio').limit(1).maybeSingle();
+    if (!actividad) throw new Error('El grupo se ha creado, pero no se ha podido crear la primera quedada. Revisa el día y la hora.');
+    return actividad;
+  }
+
+  async unirseGrupo(id) {
+    const { data, error } = await this.cliente.rpc('unirse_grupo', { p_grupo: id });
+    if (error) throw new Error(traducirError(error));
+    return data;
+  }
+
+  async salirGrupo(id) {
+    const { error } = await this.cliente.rpc('salir_grupo', { p_grupo: id });
+    if (error) throw new Error(traducirError(error));
+  }
+
+  async pausarGrupo(id, activo) {
+    const { data, error } = await this.cliente.from('grupos').update({ activo }).eq('id', id).select('id');
+    if (error) throw new Error(traducirError(error));
+    if (!data?.length) throw new Error('Solo quien creó el grupo puede pausarlo.');
   }
 
   async crear(datos) {
@@ -1393,6 +1475,7 @@ function htmlFila(a, km) {
             <span>${esc(NIVELES[a.nivel] || '')}</span>
             ${mio ? `<span class="marca-mia">${esOrganizador(a) ? 'Organizas tú' : 'Vas'}</span>` : ''}
             ${estaEnEspera(a) ? `<span class="marca-mia">En espera</span>` : ''}
+            ${a.grupo ? `<span class="marca-grupo">🔁 Cada ${DIAS[a.grupo.diaSemana - 1]}</span>` : ''}
             ${pendienteConfirmar(a) ? `<span class="marca-pendiente">Confirma si vas</span>` : ''}
             ${noLeidos(a) ? `<span class="marca-mensajes">${noLeidos(a)} ${noLeidos(a) === 1 ? 'mensaje nuevo' : 'mensajes nuevos'}</span>` : ''}
           </span>
@@ -1562,6 +1645,55 @@ function htmlChat(a, organiza) {
     </section>`;
 }
 
+function esMiembroGrupo(grupo) {
+  return !!estado.usuario && !!grupo && grupo.miembros.includes(estado.usuario.id);
+}
+
+function htmlGrupo(a) {
+  const g = a.grupo;
+  if (!g) return '';
+  const soyCreador = estado.usuario?.id === g.creador;
+  const soyMiembro = esMiembroGrupo(g);
+  let acciones;
+  if (soyCreador) {
+    acciones = g.activo
+      ? `<button class="boton terciario" data-accion="pausar-grupo" data-grupo="${g.id}">Pausar grupo</button>`
+      : `<button class="boton primario" data-accion="reactivar-grupo" data-grupo="${g.id}">Reactivar grupo</button>`;
+  } else if (soyMiembro) {
+    acciones = `<button class="boton terciario" data-accion="salir-grupo" data-grupo="${g.id}">Salir del grupo</button>`;
+  } else {
+    acciones = `<button class="boton secundario" data-accion="unirse-grupo" data-grupo="${g.id}">Unirme al grupo</button>`;
+  }
+  const n = g.miembros.length;
+  const explicacion = soyMiembro
+    ? 'Eres del grupo: cada semana te apuntamos solo. Si un día no puedes, pulsa "Ya no puedo ir".'
+    : 'Si te unes, te apuntamos solo cada semana y te avisamos al móvil.';
+  return `
+    <section class="bloque-grupo" aria-label="Grupo fijo">
+      <div class="bloque-grupo-texto">
+        <p class="bloque-grupo-titulo"><span aria-hidden="true">🔁</span> Grupo fijo: cada ${DIAS[g.diaSemana - 1]} a las ${esc(g.hora)}</p>
+        <p>${n} ${n === 1 ? 'miembro' : 'miembros'}. ${g.activo ? explicacion : 'El grupo está pausado: no se crearán más quedadas hasta que se reactive.'}</p>
+      </div>
+      ${acciones}
+    </section>`;
+}
+
+function repartirEquipos(personas) {
+  const mezcla = [...personas];
+  for (let i = mezcla.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [mezcla[i], mezcla[j]] = [mezcla[j], mezcla[i]];
+  }
+  const claro = [];
+  const oscuro = [];
+  mezcla.forEach((p, i) => (i % 2 === 0 ? claro : oscuro).push(p.nombre));
+  return { claro, oscuro };
+}
+
+function puedeHacerEquipos(a) {
+  return esOrganizador(a) && DEPORTES_DE_EQUIPO.has(a.deporte) && a.apuntados.length >= 4 && puedeVerChat(a);
+}
+
 function htmlConfirmacion(a) {
   if (!pendienteConfirmar(a)) {
     const yo = miInscripcion(a);
@@ -1633,6 +1765,8 @@ function htmlDetalle(a) {
         </div>
       </div>
 
+      ${htmlGrupo(a)}
+
       <section class="plazas-detalle" aria-label="Plazas">
         <div class="plazas-cabecera">
           <span class="plazas-numero">${p.n}<small>/${a.max}</small></span>
@@ -1647,6 +1781,7 @@ function htmlDetalle(a) {
         <div class="acciones-secundarias">
           <button class="boton terciario" data-accion="compartir">Copiar enlace</button>
           <button class="boton terciario" data-accion="calendario">Añadir al calendario</button>
+          ${puedeHacerEquipos(a) ? '<button class="boton terciario" data-accion="hacer-equipos">Hacer equipos</button>' : ''}
           <a class="boton terciario" href="https://www.google.com/maps/dir/?api=1&destination=${a.lugar.lat},${a.lugar.lng}" target="_blank" rel="noopener">Cómo llegar</a>
         </div>
       </section>
@@ -1683,8 +1818,38 @@ function htmlBannerAvisos() {
     </button>`;
 }
 
+function htmlMisGrupos() {
+  if (!estado.usuario || !estado.misGrupos.length) return '';
+  const filas = estado.misGrupos.map(g => {
+    const d = DEPORTES[g.deporte] || DEPORTES.futbol;
+    const proxima = estado.actividades
+      .filter(a => a.grupo?.id === g.id && !haTerminado(a))
+      .sort((x, y) => new Date(x.inicio) - new Date(y.inicio))[0];
+    const cuando = proxima ? `Próxima: ${etiquetaDia(new Date(proxima.inicio)).toLowerCase()}, ${formatoHora(new Date(proxima.inicio))}` : (g.activo ? 'La próxima se crea en breve' : 'Pausado');
+    return `
+      <li>
+        <button class="fila fila-grupo" ${proxima ? `data-abrir="${proxima.id}"` : 'disabled'} style="--c:${d.color}">
+          <span class="icono-deporte" aria-hidden="true">${d.icono}</span>
+          <span class="fila-cuerpo">
+            <span class="fila-titulo">${esc(g.nombre)}</span>
+            <span class="fila-lugar">Cada ${DIAS[g.diaSemana - 1]} a las ${esc(g.hora)}, ${esc(g.lugar || '')}</span>
+            <span class="fila-meta"><span>${g.miembros.length} ${g.miembros.length === 1 ? 'miembro' : 'miembros'}</span><span>${cuando}</span>${g.creador === estado.usuario.id ? '<span class="marca-mia">Lo creaste tú</span>' : ''}</span>
+          </span>
+        </button>
+      </li>`;
+  }).join('');
+  return `
+    <section class="grupo-dia mis-grupos">
+      <h2>Mis grupos</h2>
+      <ul class="lista">${filas}</ul>
+    </section>`;
+}
+
 function htmlPlanes() {
   const lista = misPlanes();
+  if (estado.usuario && !lista.length && estado.misGrupos.length) {
+    return htmlBannerAvisos() + htmlMisGrupos();
+  }
   if (!estado.usuario || !lista.length) {
     return `
       <div class="vacio planes-vacio">
@@ -1702,11 +1867,17 @@ function htmlPlanes() {
     if (!grupos.has(clave)) grupos.set(clave, []);
     grupos.get(clave).push(a);
   }
-  return htmlBannerAvisos() + [...grupos].map(([dia, acts]) => `
+  return htmlBannerAvisos() + htmlMisGrupos() + [...grupos].map(([dia, acts]) => `
     <section class="grupo-dia">
       <h2>${dia}</h2>
       <ul class="lista">${acts.map(a => htmlFila(a, distanciaKm(estado.origen, a.lugar))).join('')}</ul>
     </section>`).join('');
+}
+
+function nombreGrupoPorDefecto(b) {
+  const fecha = new Date(`${b.fecha}T${b.hora || '12:00'}`);
+  const dia = isNaN(fecha) ? 'jueves' : DIAS_PLURAL[(fecha.getDay() || 7) - 1];
+  return `${DEPORTES[b.deporte]?.nombre || 'Deporte'} de los ${dia}`;
 }
 
 function borradorNuevo(deporte = 'futbol') {
@@ -1759,6 +1930,13 @@ function htmlCrear() {
           <label class="campo"><span>Hora</span><input type="time" data-campo="hora" value="${b.hora}" required step="300"></label>
         </div>
         <label class="campo"><span>Duración</span><select data-campo="duracionMin">${opcionesDuracion}</select></label>
+        ${estado.almacen?.gruposDisponibles ? `
+          <div class="caja-repetir">
+            <label class="interruptor"><input type="checkbox" data-campo-repetir ${b.repetir ? 'checked' : ''}><span>Se repite cada semana</span></label>
+            ${b.repetir ? `
+              <label class="campo"><span>Nombre del grupo</span><input data-campo="nombreGrupo" maxlength="60" value="${esc(b.nombreGrupo || '')}" placeholder="${esc(nombreGrupoPorDefecto(b))}"></label>
+              <p class="nota">Cada semana se creará sola la quedada siguiente y las personas del grupo quedarán apuntadas. Quien no pueda ir lo dice con un toque.</p>` : ''}
+          </div>` : ''}
       </fieldset>
 
       <fieldset>
@@ -2166,14 +2344,61 @@ async function publicar() {
     organizador: estado.usuario
   };
   try {
-    const nueva = await estado.almacen.crear(datos);
+    const repetir = b.repetir && estado.almacen.gruposDisponibles;
+    const nueva = repetir
+      ? await estado.almacen.crearGrupo(datos, (b.nombreGrupo || '').trim() || b.titulo.trim() || nombreGrupoPorDefecto(b))
+      : await estado.almacen.crear(datos);
     await refrescar();
     estado.borrador = null;
     capaBorrador.clearLayers();
-    avisar('Quedada publicada');
+    avisar(repetir ? 'Grupo creado: la quedada se repetirá cada semana' : 'Quedada publicada');
     abrirDetalle(nueva.id);
   } catch (error) {
     errorFormulario(error.message);
+  }
+}
+
+async function accionGrupo(tipo, id) {
+  try {
+    if (tipo === 'unirse-grupo') {
+      const usuario = await asegurarUsuario('Para unirte al grupo, entra con tu cuenta.');
+      if (!usuario) return;
+      await estado.almacen.unirseGrupo(id);
+      avisar('¡Ya eres del grupo! Te apuntaremos cada semana');
+      invitarAAvisos();
+    } else if (tipo === 'salir-grupo') {
+      const ok = await confirmar('¿Salir del grupo?', 'Dejarás de estar apuntado automáticamente cada semana. Tu plaza en la quedada de esta semana se mantiene.', 'Salir del grupo');
+      if (!ok) return;
+      await estado.almacen.salirGrupo(id);
+      avisar('Has salido del grupo');
+    } else if (tipo === 'pausar-grupo') {
+      const ok = await confirmar('¿Pausar el grupo?', 'No se crearán más quedadas semanales hasta que lo reactives. La de esta semana se mantiene.', 'Pausar grupo');
+      if (!ok) return;
+      await estado.almacen.pausarGrupo(id, false);
+      avisar('Grupo pausado');
+    } else {
+      await estado.almacen.pausarGrupo(id, true);
+      avisar('Grupo reactivado');
+    }
+    await refrescar();
+    pintarVista();
+  } catch (error) {
+    avisar(error.message, 'error');
+  }
+}
+
+async function hacerEquipos() {
+  const a = estado.actividades.find(x => x.id === estado.seleccion);
+  if (!a) return;
+  const { claro, oscuro } = repartirEquipos(a.apuntados);
+  const texto = `Equipos hechos al azar 🎲\n⚪ Claro: ${claro.join(', ')}\n⚫ Oscuro: ${oscuro.join(', ')}`;
+  try {
+    await estado.almacen.escribir(a.id, estado.usuario, texto);
+    await refrescar();
+    pintarVista();
+    avisar('Equipos publicados en el chat');
+  } catch (error) {
+    avisar(error.message, 'error');
   }
 }
 
@@ -2438,6 +2663,15 @@ document.addEventListener('click', async e => {
     case 'abrir-avisos':
       abrirAvisos();
       break;
+    case 'unirse-grupo':
+    case 'salir-grupo':
+    case 'pausar-grupo':
+    case 'reactivar-grupo':
+      accionGrupo(objetivo.dataset.accion, objetivo.dataset.grupo);
+      break;
+    case 'hacer-equipos':
+      hacerEquipos();
+      break;
     case 'editar-aviso':
       editarAviso();
       break;
@@ -2511,6 +2745,14 @@ document.addEventListener('input', e => {
 
 document.addEventListener('change', e => {
   const el = e.target;
+  if (el.matches?.('[data-campo-repetir]') && estado.borrador) {
+    estado.borrador.repetir = el.checked;
+    const scroll = $('#vista').scrollTop;
+    pintarVista();
+    pintarBorrador();
+    $('#vista').scrollTop = scroll;
+    return;
+  }
   const mapaFiltros = { 'f-cuando': 'cuando', 'f-nivel': 'nivel', 'f-orden': 'orden', 'f-plazas': 'conPlazas', 'f-gratis': 'gratis', 'f-zona': 'zona' };
   const clave = mapaFiltros[el.id];
   if (!clave) return;

@@ -13,6 +13,8 @@ Una app para encontrar gente con la que hacer deporte cerca de ti: ves en un **m
 - **Escribir mensajes** al grupo, **copiar el enlace** para invitar a gente, **añadir al calendario** y abrir **cómo llegar**.
 - **Mis planes**: todo lo que tienes pendiente, ordenado por día, con aviso de mensajes nuevos.
 - **Chat de cada quedada**: solo lo ven las personas apuntadas. Incluye mensajes automáticos ("Ana se ha apuntado", "Ya sois 12: ¡quedada confirmada!"), un aviso fijado por quien organiza ("Pista 3, puerta norte") y el aviso de "está escribiendo…".
+- **Grupos fijos**: al crear una quedada puedes marcar "Se repite cada semana". Cada semana se crea sola la siguiente y las personas del grupo quedan apuntadas (con aviso al móvil). Quien vea la quedada puede unirse al grupo, y quien lo creó puede pausarlo.
+- **Hacer equipos**: en los deportes de equipo, quien organiza reparte a la gente al azar en dos equipos (claro y oscuro) y el reparto se publica en el chat.
 - **Avisos en el móvil**: notificaciones aunque la app esté cerrada (1 hora antes, "¿Sigues yendo?", mensajes del chat, plaza desde la lista de espera y quedadas nuevas cerca de los deportes que elijas). En iPhone hay que añadir la app a la pantalla de inicio primero.
 - **Entrar con Google**: el botón aparece solo cuando Google está activado en Supabase.
 - **Confirmar asistencia**: 3 horas antes te pregunta "¿Sigues yendo?". Si no confirmas y hay gente en lista de espera, una hora antes tu plaza pasa al primero que espera. Así hay menos plantones.
@@ -26,7 +28,8 @@ Una app para encontrar gente con la que hacer deporte cerca de ti: ves en un **m
   1. `1-estructura.sql`: tablas, reglas de seguridad y permisos.
   2. `4-chat-y-asistencia.sql`: chat de cada quedada, mensajes automáticos, aviso fijado y confirmación de asistencia.
   3. `5-avisos-y-google.sql`: notificaciones en el móvil y nombre de perfil para quien entra con Google.
-  4. `2-ejemplos.sql`: las quedadas de ejemplo.
+  4. `6-grupos.sql`: grupos fijos con quedadas que se repiten cada semana.
+  5. `2-ejemplos.sql`: las quedadas de ejemplo.
   (`3-permisos.sql` ya va incluido en el 1; solo hacía falta en proyectos creados antes.)
 - Si vuelves a ejecutar `2-ejemplos.sql`, las quedadas de ejemplo se renuevan con fechas de los próximos días. Las quedadas reales no se tocan.
 - Los cambios llegan solos y al momento: si alguien se apunta, lo ves sin recargar.
