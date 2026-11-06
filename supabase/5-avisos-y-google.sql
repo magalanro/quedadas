@@ -65,6 +65,13 @@ create table if not exists public.avisos_pendientes (
 
 create index if not exists avisos_pendientes_sin_enviar_idx on public.avisos_pendientes (id) where reclamado is null;
 
+create table if not exists public.claves_vapid (
+  id int primary key default 1 check (id = 1),
+  publica text not null,
+  privada text not null,
+  creada timestamptz not null default now()
+);
+
 create table if not exists public.avisos_enviados (
   clave text primary key,
   creado timestamptz not null default now()
@@ -74,6 +81,9 @@ alter table public.suscripciones_push enable row level security;
 alter table public.preferencias_avisos enable row level security;
 alter table public.avisos_pendientes enable row level security;
 alter table public.avisos_enviados enable row level security;
+alter table public.claves_vapid enable row level security;
+revoke all on public.claves_vapid from anon, authenticated;
+grant select, insert on public.claves_vapid to service_role;
 
 drop policy if exists "ver mis suscripciones" on public.suscripciones_push;
 create policy "ver mis suscripciones" on public.suscripciones_push for select to authenticated using (usuario_id = auth.uid());

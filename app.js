@@ -443,6 +443,7 @@ class AlmacenSupabase {
     });
     this.google = false;
     this.vapidPublica = config.vapidPublica || '';
+    this.urlAvisos = `${config.supabaseUrl}/functions/v1/enviar-avisos`;
     this.temporizador = null;
     this.chat = null;
     this.asistencia = false;
@@ -549,6 +550,19 @@ class AlmacenSupabase {
       options: { redirectTo: location.origin + location.pathname, queryParams: { prompt: 'select_account' } }
     });
     if (error) throw new Error(traducirError(error));
+  }
+
+  async obtenerClaveVapid() {
+    if (this.vapidPublica) return this.vapidPublica;
+    try {
+      const respuesta = await fetch(`${this.urlAvisos}?clave`);
+      const json = await respuesta.json();
+      if (respuesta.ok && json.publica) {
+        this.vapidPublica = json.publica;
+        return json.publica;
+      }
+    } catch {}
+    throw new Error('Los avisos todavía no están instalados en Supabase (falta la función enviar-avisos).');
   }
 
   async guardarSuscripcion(endpoint, p256dh, auth) {
@@ -742,7 +756,7 @@ const avisosMovil = {
 
   configurado() {
     const seguro = location.protocol === 'https:' || ['localhost', '127.0.0.1'].includes(location.hostname);
-    return seguro && !!estado.almacen?.vapidPublica && !!estado.almacen?.guardarSuscripcion;
+    return seguro && !!estado.almacen?.guardarSuscripcion;
   },
 
   async obtenerRegistro() {
@@ -777,11 +791,17 @@ const avisosMovil = {
         ? 'Has bloqueado las notificaciones. Permítelas en los ajustes del navegador para esta web.'
         : 'No se han activado las notificaciones.');
     }
+    const clave = base64UrlABytes(await estado.almacen.obtenerClaveVapid());
     const registro = await this.obtenerRegistro();
     await navigator.serviceWorker.ready;
     let suscripcion = await registro.pushManager.getSubscription();
+    const claveActual = suscripcion?.options?.applicationServerKey;
+    if (suscripcion && claveActual && new Uint8Array(claveActual).join() !== clave.join()) {
+      await suscripcion.unsubscribe();
+      suscripcion = null;
+    }
     if (!suscripcion) {
-      suscripcion = await registro.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: base64UrlABytes(estado.almacen.vapidPublica) });
+      suscripcion = await registro.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: clave });
     }
     const datos = suscripcion.toJSON();
     await estado.almacen.guardarSuscripcion(datos.endpoint, datos.keys.p256dh, datos.keys.auth);

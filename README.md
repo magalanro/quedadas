@@ -37,7 +37,7 @@ Una app para encontrar gente con la que hacer deporte cerca de ti: ves en un **m
 2. Cuando pasa algo (un mensaje, una plaza libre, falta 1 hora), la base de datos apunta el aviso en `avisos_pendientes` y llama a la función `enviar-avisos`.
 3. Esa función (`supabase/functions/enviar-avisos/index.ts`, instalada en Supabase como Edge Function) firma cada aviso con la clave privada VAPID y lo manda al móvil. El archivo `sw.js` de la app lo recibe y lo muestra aunque la app esté cerrada.
 
-La clave pública VAPID está en `config.js`. La privada solo se guarda en Supabase (Edge Functions, Secrets) y nunca en este repositorio.
+Las claves VAPID (las que firman los avisos) las crea la propia función la primera vez y las guarda en la tabla `claves_vapid`, que solo puede leer la función. La app pide la clave pública a la función. Nadie tiene que copiar claves a mano y la privada nunca está en este repositorio.
 
 Si vacías `config.js`, la app vuelve a funcionar en modo local o con `servidor.py`, como se explica abajo.
 
