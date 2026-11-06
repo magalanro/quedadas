@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#1E7A4C">
+<meta name="description" content="Encuentra y crea quedadas deportivas cerca de ti: partidos, rutas de running, bici y más.">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Quedadas">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="iconos/icono-192.png">
+<link rel="apple-touch-icon" href="iconos/apple-touch-icon.png">
+<title>Quedadas: haz deporte con gente cerca de ti</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="vendor/leaflet.css">
+<link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+<div class="app" id="app">
+  <aside class="panel" id="panel">
+    <header class="cabecera">
+      <a class="marca" href="#" data-accion="inicio">
+        <svg viewBox="0 0 32 32" width="30" height="30" aria-hidden="true"><path d="M16 2C9.4 2 4 7.2 4 13.6 4 22 16 30 16 30s12-8 12-16.4C28 7.2 22.6 2 16 2z" fill="#1E7A4C"/><circle cx="12.5" cy="13" r="3.6" fill="#fff"/><circle cx="19.5" cy="13" r="3.6" fill="#FF6B1A"/></svg>
+        <span>Quedadas</span>
+      </a>
+      <button class="boton-usuario" id="boton-usuario" data-accion="perfil" aria-label="Tu perfil"></button>
+    </header>
+    <nav class="pestanas" role="tablist" aria-label="Secciones">
+      <button role="tab" data-pestana="explorar" aria-selected="true">Explorar</button>
+      <button role="tab" data-pestana="planes" aria-selected="false">Mis planes <span class="contador" id="contador-planes" hidden></span></button>
+    </nav>
+    <div class="vista" id="vista"></div>
+  </aside>
+  <main class="zona-mapa" id="zona-mapa">
+    <div id="mapa" role="region" aria-label="Mapa de quedadas"></div>
+    <div class="aviso-mapa" id="aviso-mapa" hidden></div>
+    <button class="boton-redondo boton-ubicarme" data-accion="ubicarme" aria-label="Centrar en mi ubicación" title="Centrar en mi ubicación">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="currentColor"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="12" r="7.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+    </button>
+    <button class="boton-crear" id="boton-crear" data-accion="crear">
+      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg>
+      Crear quedada
+    </button>
+    <div class="vista-previa" id="vista-previa" hidden></div>
+  </main>
+  <nav class="conmutador" id="conmutador" aria-label="Cambiar vista">
+    <button data-modo="lista" aria-pressed="true">Lista</button>
+    <button data-modo="mapa" aria-pressed="false">Mapa</button>
+  </nav>
+</div>
+<div class="capa-modal" id="modal" hidden></div>
+<div class="avisos" id="avisos" aria-live="polite"></div>
+<script src="vendor/leaflet.js"></script>
+<script src="vendor/supabase.js"></script>
+<script src="config.js"></script>
+<script src="datos-ejemplo.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

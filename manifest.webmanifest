@@ -1,0 +1,16 @@
+{
+  "name": "Quedadas: deporte con gente cerca",
+  "short_name": "Quedadas",
+  "description": "Encuentra y crea quedadas deportivas cerca de ti: partidos, rutas de running, bici y más.",
+  "lang": "es",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#F4F7F5",
+  "theme_color": "#1E7A4C",
+  "icons": [
+    { "src": "iconos/icono-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "iconos/icono-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "iconos/icono-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
